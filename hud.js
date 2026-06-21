@@ -71,11 +71,14 @@ export async function main(ns) {
         try { pserv = ns.cloud.getServerNames().length; } catch (e) { pserv = 0; }
         let liveIncome = 0;
         try { liveIncome = ns.getTotalScriptIncome()[0]; } catch (e) { liveIncome = 0; }
+        let sharePow = 1;
+        try { sharePow = ns.getSharePower(); } catch (e) { sharePow = 1; }
+        const shareStr = sharePow > 1.001 ? ("share x" + sharePow.toFixed(3)) : "share off";
 
         // --- build snapshot lines ---
         const lines = [];
         lines.push("L" + lvl + "    $" + fmt(cash) + "    farm +$" + fmt(liveIncome) + "/s");
-        lines.push("pool " + totalPrep + " prep + " + totalHack + " hack = " + (totalPrep + totalHack) + "t     rooted " + rooted + "     pserv " + pserv + "     contracts " + contracts);
+        lines.push("pool " + totalPrep + " prep + " + totalHack + " hack = " + (totalPrep + totalHack) + "t     rooted " + rooted + "     pserv " + pserv + "     contracts " + contracts + "     " + shareStr);
         lines.push("--------------------------------------------------------");
         lines.push(pad("TARGET", 20) + padL("MON%", 6) + padL("SEC", 7) + padL("PREP", 6) + padL("HACK", 6) + padL("$/s", 9));
         const rows = Object.keys(data).sort((a, b) =>
