@@ -2,7 +2,8 @@
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.ui.openTail();
-    ns.ui.resizeTail(660, 460);
+    ns.ui.resizeTail(660, 480);
+    const React = globalThis.React;
 
     while (true) {
         // --- scan the whole network ---
@@ -49,12 +50,12 @@ export async function main(ns) {
         let totalIncome = 0;
         for (const t in data) totalIncome += data[t].income;
 
-        // --- render ---
-        ns.clearLog();
-        ns.print("L" + lvl + "    $" + fmt(cash) + "    farm +$" + fmt(totalIncome) + "/s");
-        ns.print("pool " + totalPrep + " prep + " + totalHack + " hack = " + (totalPrep + totalHack) + "t     rooted " + rooted + "     pserv " + pserv);
-        ns.print("--------------------------------------------------------");
-        ns.print(pad("TARGET", 20) + padL("MON%", 6) + padL("SEC", 7) + padL("PREP", 6) + padL("HACK", 6) + padL("$/s", 9));
+        // --- build snapshot lines ---
+        const lines = [];
+        lines.push("L" + lvl + "    $" + fmt(cash) + "    farm +$" + fmt(totalIncome) + "/s");
+        lines.push("pool " + totalPrep + " prep + " + totalHack + " hack = " + (totalPrep + totalHack) + "t     rooted " + rooted + "     pserv " + pserv);
+        lines.push("--------------------------------------------------------");
+        lines.push(pad("TARGET", 20) + padL("MON%", 6) + padL("SEC", 7) + padL("PREP", 6) + padL("HACK", 6) + padL("$/s", 9));
         const rows = Object.keys(data).sort((a, b) =>
             (data[b].income - data[a].income) ||
             (data[b].hack - data[a].hack) ||
@@ -64,7 +65,7 @@ export async function main(ns) {
             const mon = max > 0 ? (ns.getServerMoneyAvailable(t) / max * 100) : 0;
             const sec = ns.getServerSecurityLevel(t) - ns.getServerMinSecurityLevel(t);
             const d = data[t];
-            ns.print(
+            lines.push(
                 pad(t, 20) +
                 padL(mon.toFixed(1), 6) +
                 padL("+" + sec.toFixed(1), 7) +
@@ -73,7 +74,28 @@ export async function main(ns) {
                 padL(fmt(d.income), 9)
             );
         }
-        if (rows.length === 0) ns.print("(no farm workers deployed yet)");
+        if (rows.length === 0) lines.push("(no farm workers deployed yet)");
+
+        const snapshot = lines.join("\n");
+
+        // --- render: copy button on top, then the text ---
+        ns.clearLog();
+        ns.printRaw(React.createElement(
+            "button",
+            {
+                onClick: () => {
+                    try {
+                        globalThis.navigator.clipboard.writeText(snapshot);
+                        ns.toast("HUD copied to clipboard", "success", 2000);
+                    } catch (e) {
+                        ns.toast("copy failed: " + e, "error", 4000);
+                    }
+                },
+                style: { margin: "2px 0 4px 0", padding: "2px 12px", cursor: "pointer" }
+            },
+            "Copy HUD"
+        ));
+        for (const line of lines) ns.print(line);
 
         await ns.sleep(2000);
     }
