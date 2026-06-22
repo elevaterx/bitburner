@@ -101,12 +101,12 @@ export async function main(ns) {
                 const pool = [];
                 for (const h of all) {
                     if (!ns.hasRootAccess(h) || ns.getServerMaxRam(h) <= 0) continue;
-                    ns.killall(h);
+                    ns.scriptKill(PREP, h); ns.scriptKill(HACK, h);
                     ns.scp([PREP, HACK], h, "home");
                     const free = Math.floor((ns.getServerMaxRam(h) - ns.getServerUsedRam(h)) / workerRam);
                     if (free > 0) pool.push({ host: h, free });
                 }
-                ns.killall("home", true);
+                ns.scriptKill(PREP, "home"); ns.scriptKill(HACK, "home");
                 const hf = Math.floor((ns.getServerMaxRam("home") - ns.getServerUsedRam("home") - HOME_RESERVE) / workerRam);
                 if (hf > 0) pool.push({ host: "home", free: hf });
                 pool.sort((a, b) => b.free - a.free);
