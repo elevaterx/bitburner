@@ -15,7 +15,7 @@ export async function main(ns) {
   const o = [];
   o.push("=== bdiag " + target + " ===");
   o.push("Formulas.exe: " + (p.hasFormulas ? "YES (exact prepped-state math)" : "NO (base funcs, current-state approx)"));
-  o.push(`money:  ${ns.formatNumber(p.curMoney)} / ${ns.formatNumber(p.maxMoney)}  (${(100*p.curMoney/p.maxMoney).toFixed(1)}%)`);
+  o.push(`money:  ${ns.format.number(p.curMoney)} / ${ns.format.number(p.maxMoney)}  (${(100*p.curMoney/p.maxMoney).toFixed(1)}%)`);
   o.push(`sec:    ${p.curSec.toFixed(2)} / min ${p.minSec.toFixed(2)}  (+${(p.curSec-p.minSec).toFixed(2)})`);
   o.push("prepped: " + (p.prepped ? "YES" : "NO - run bprep.js first for a meaningful plan"));
   o.push(`times:  W ${(p.weakenTime/1000).toFixed(1)}s  G ${(p.growTime/1000).toFixed(1)}s  H ${(p.hackTime/1000).toFixed(1)}s`);
