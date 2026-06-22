@@ -42,19 +42,29 @@ export async function main(ns) {
                 if (ns.fileExists("SQLInject.exe","home")) ns.sqlinject(h);
                 if (ns.getServerNumPortsRequired(h) <= have) ns.nuke(h);
             }
-            // --- pick candidates (level-filtered, richest first) ---
+            // --- pick candidates (level-filtered, ranked by yield-efficiency) ---
             const L = ns.getHackingLevel();
             const maxReq = L * levelRatio;
             // servers I can currently hack at all: rooted, has money, reqLevel <= my level
             const rootedMoney = all.filter(h => ns.hasRootAccess(h) && ns.getServerMaxMoney(h) > 0
                                               && ns.getServerRequiredHackingLevel(h) <= L);
+            // Efficiency score per candidate, computed ONCE (quantized + hostname tiebreak so the
+            // ordering is a deterministic function of state -- this is what keeps focus/key stable).
+            // Used for SORT ONLY, never for filtering: the eligibility filter + zero-target fallback
+            // below stay reqLevel-based, so the L1 cold-start deadlock cannot return.
+            const scoreOf = {};
+            for (const h of rootedMoney) scoreOf[h] = scoreServer(ns, h);
+            const byScore = (a, b) => {
+                const d = (scoreOf[b] || 0) - (scoreOf[a] || 0);
+                return d !== 0 ? d : (a < b ? -1 : a > b ? 1 : 0);   // tiebreak: hostname asc
+            };
             // normal selection uses the ratio filter (skip near-level targets with poor odds);
             // but if that strands us with ZERO targets -- the cold-start deadlock, e.g. n00dles
             // needs L1 while ratio*L < 1 at level 1 -- fall back to every hackable server so the
             // coordinator can never sit idle with no targets and no way to level out of it.
             let eligible = rootedMoney.filter(h => ns.getServerRequiredHackingLevel(h) <= maxReq);
             if (eligible.length === 0) eligible = rootedMoney;
-            eligible.sort((a, b) => ns.getServerMaxMoney(b) - ns.getServerMaxMoney(a));
+            eligible.sort(byScore);
             const top = eligible.slice(0, numTargets);
 
             // --- classify with hysteresis: ANY eligible server that's fully prepped can be
@@ -73,9 +83,12 @@ export async function main(ns) {
             }
 
             // harvest = currently-prepped servers, sticky even if bumped out of top-N;
-            // richest-first, value-floored, capped so we don't spread too thin
-            let harvest = [...preppedSet].sort((a, b) => ns.getServerMaxMoney(b) - ns.getServerMaxMoney(a));
-            const bestMoney = harvest.length ? ns.getServerMaxMoney(harvest[0]) : 0;
+            // ordered by efficiency (crew placement loads the best $/RAM-sec targets first),
+            // but ADMISSION stays on static max-money: the value floor is relative to the richest
+            // earner (explicit max, not harvest[0]), so a server can't flip in/out of the set as
+            // its score drifts -- that drift is exactly what would thrash the rebalance key.
+            let harvest = [...preppedSet].sort(byScore);
+            const bestMoney = harvest.length ? Math.max(...harvest.map(t => ns.getServerMaxMoney(t))) : 0;
             harvest = harvest.filter(t => ns.getServerMaxMoney(t) >= VALUE_FLOOR * bestMoney)
                              .slice(0, numTargets + STICKY_EXTRA);
             // focus selection:
@@ -89,11 +102,15 @@ export async function main(ns) {
                     ? cold.reduce((a, b) => prepCost(ns, b) < prepCost(ns, a) ? b : a)
                     : null;
             } else {
+                // top is now efficiency-ranked, so this digs the best $/RAM-sec unprepped target
+                // rather than merely the richest. Quantized scores keep this choice stable loop-to-loop.
                 focus = top.find(t => !preppedSet.has(t)) || null;
             }
 
-            // --- only rebalance when the harvest set or focus changes ---
-            const key = harvest.join(",") + "|" + (focus || "") + "|L" + Math.floor(L / 10);
+            // --- only rebalance when the harvest MEMBERSHIP, focus, or level-band changes ---
+            // key is built from a canonical (alphabetical) member ordering, NOT the efficiency sort
+            // order, so re-ranking the same set of earners never triggers a teardown/redeploy.
+            const key = [...harvest].sort().join(",") + "|" + (focus || "") + "|L" + Math.floor(L / 10);
             if (key !== lastKey) {
                 lastKey = key;
 
@@ -182,4 +199,24 @@ function prepCost(ns, t) {
     const secExcess = ns.getServerSecurityLevel(t) - ns.getServerMinSecurityLevel(t);
     const weakenT = secExcess / (ns.weakenAnalyze(1) || 0.05);
     return growT + weakenT;
+}
+
+// --- yield-efficiency score (relative target ranking) ---------------------------------------
+// effScore is PURE (Node-testable): expected income rate per hack thread = $ * frac * prob / ms.
+// Quantized to 3 significant figures so sub-0.1% drift in the live reads can't reorder targets
+// and thrash focus/key selection. Higher = better target. Returns 0 on any non-positive input.
+function effScore(maxMoney, hackPct, hackChance, hackTimeMs) {
+    if (!(maxMoney > 0) || !(hackPct > 0) || !(hackChance > 0) || !(hackTimeMs > 0)) return 0;
+    return quantize((maxMoney * hackPct * hackChance) / hackTimeMs);
+}
+function quantize(x) {
+    if (!(x > 0) || !isFinite(x)) return 0;
+    return Number(x.toPrecision(3));
+}
+// live wrapper: base-API reads only (NO Formulas.exe, which is lost on every install). For a
+// prepped server these are at min-sec / max-money (accurate); for a cold server they're a
+// current-state approximation -- fine for relative ranking, but flagged: cold scores understate
+// a target until it's prepped, so focus can favor a partly-prepped server over a colder one.
+function scoreServer(ns, t) {
+    return effScore(ns.getServerMaxMoney(t), ns.hackAnalyze(t), ns.hackAnalyzeChance(t), ns.getHackTime(t));
 }
