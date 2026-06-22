@@ -57,8 +57,12 @@ export async function main(ns) {
             eligible.sort((a, b) => ns.getServerMaxMoney(b) - ns.getServerMaxMoney(a));
             const top = eligible.slice(0, numTargets);
 
-            // --- classify with hysteresis over top + already-prepped (keeps sticky earners fresh) ---
-            const watch = new Set(top);
+            // --- classify with hysteresis: ANY eligible server that's fully prepped can be
+            // promoted to the harvest set (not just the top-N). The cold start preps the cheapest
+            // server (n00dles) first; restricting promotion to top-N stranded it there forever,
+            // since n00dles is never among the richest. The harvest set is value-floored and
+            // sliced below, so poor servers drop off on their own once richer ones come online. ---
+            const watch = new Set(eligible);
             for (const t of preppedSet) watch.add(t);
             for (const t of watch) {
                 if (!ns.hasRootAccess(t) || ns.getServerMaxMoney(t) <= 0) { preppedSet.delete(t); continue; }
