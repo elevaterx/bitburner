@@ -80,26 +80,27 @@ export async function prepTarget(ns, target, log = () => {}) {
   for (let pass = 1; pass < 100000; pass++) {
     const p = getParams(ns, target);
     if (p.prepped) { log("PREPPED " + target); return true; }
-    // Wait on the CURRENT-security weaken time. p.weakenTime is computed at MIN security (correct for
-    // batch scheduling, where ops run on a prepped server) -- but during prep the server is still dirty
-    // and op times scale with current security, so sleeping p.weakenTime under-waits and re-fires the
-    // same pass before the weaken lands. ns.getWeakenTime reads the live (dirty) security, so it's right
-    // here regardless of Formulas.
+    // Wait on the CURRENT-security weaken time (server is dirty during prep; p.weakenTime is min-sec, for
+    // batch scheduling). ns.getWeakenTime reads live security, so it's right here regardless of Formulas.
     const waitMs = ns.getWeakenTime(target) + 400;
-    if (p.curSec > p.minSec + 0.01) {
-      const wt = weakenThreadsToMin(p.curSec, p.minSec, p.weakenPerThread);
-      const got = dispatch(ns, "bweaken.js", wt, target, 0);
-      log(`prep ${pass}: weaken ${got}/${wt}  sec ${p.curSec.toFixed(2)}->${p.minSec.toFixed(2)}`);
-      await ns.sleep(waitMs);
-    } else {
+    // ONE combined pass: grow toward max (if low) AND weaken for the current excess PLUS the grow's own
+    // security bump, dispatched together so they land in the same weaken window. A server handed over
+    // near-prepped (~90% money, near-min sec) finishes in a single ~weakenTime wait instead of the two
+    // sequential passes the old weaken-then-grow split needed -- which on a megacorp (~11 min/pass) was the
+    // difference between ~11 and ~22 minutes of startup before batching begins. A cold server still
+    // converges in a couple passes as security settles and the grow estimate sharpens.
+    let gGot = 0, growSec = 0;
+    if (p.curMoney < p.maxMoney - 1) {
       const mult = growMultiplierToMax(p.curMoney, p.maxMoney);
       const gt = growThreadsForMultiplier(ns, target, mult, p);
-      const gGot = dispatch(ns, "bgrow.js", gt, target, 0);
-      const wt = Math.ceil(gGot * GROW_SEC_PER_THREAD / p.weakenPerThread);
-      const wGot = dispatch(ns, "bweaken.js", wt, target, 0);
-      log(`prep ${pass}: grow ${gGot}/${gt} (${(100*p.curMoney/p.maxMoney).toFixed(1)}%) +weaken ${wGot}`);
-      await ns.sleep(waitMs);
+      gGot = dispatch(ns, "bgrow.js", gt, target, 0);
+      growSec = gGot * GROW_SEC_PER_THREAD;
     }
+    const secExcess = Math.max(0, p.curSec - p.minSec);
+    const wt = Math.ceil((secExcess + growSec) / p.weakenPerThread);
+    const wGot = wt > 0 ? dispatch(ns, "bweaken.js", wt, target, 0) : 0;
+    log(`prep ${pass}: grow ${gGot} (${(100 * p.curMoney / p.maxMoney).toFixed(1)}%) weaken ${wGot} (sec +${secExcess.toFixed(2)})`);
+    await ns.sleep(waitMs);
   }
   return false;
 }
