@@ -27,10 +27,22 @@ export async function main(ns) {
     const ENABLE_PROGRAMS  = true;
     const ENABLE_BACKDOORS = true;
     const ENABLE_WORK      = true;
+    const ENABLE_CRIME     = true;        // commit crime when cash < CASH_FLOOR
 
     const CASH_RESERVE = 1_000_000;   // never let cash drop below this from purchases
+    const CASH_FLOOR   = 5_000_000;   // crime when cash below this; faction work above
     const FOCUS        = true;        // true = 2x rep rate, blocks manual UI activity
     const LOOP_MS      = 5000;        // seconds between loop iterations
+
+    // candidate crimes for the EV picker. v3 requires exact-match strings.
+    // The picker evaluates chance × money / time and selects the best at current stats,
+    // so this list can stay broad -- low-stat crimes get filtered out automatically.
+    const CRIMES = [
+        "Shoplift", "Rob Store", "Mug", "Larceny",
+        "Deal Drugs", "Bond Forgery", "Traffick Illegal Arms",
+        "Homicide", "Grand Theft Auto", "Kidnap and Ransom",
+        "Assassination", "Heist",
+    ];
 
     // factions safe to auto-join: no enemies, no city factions, no gang factions
     const JOIN_WHITELIST = new Set([
@@ -162,8 +174,51 @@ export async function main(ns) {
             } catch (e) { log("  [backdoor phase error] " + e); }
         }
 
-        // --- PHASE 4: faction work driver ---
-        if (ENABLE_WORK) {
+        // --- PHASE 4: earner driver -- crime when cash low, faction work otherwise ---
+        // The choice is per-loop: if cash is below CASH_FLOOR and ENABLE_CRIME, commit
+        // the best-EV crime. Otherwise work the highest-priority faction we're a member of.
+        // Crime in progress isn't restarted each loop (alreadyAt check). When cash crosses
+        // back above CASH_FLOOR, next loop's workForFaction cancels any running crime and
+        // starts work, costing the partial crime earnings -- acceptable for the simpler logic.
+        const doCrime = ENABLE_CRIME && cash < CASH_FLOOR;
+        if (doCrime) {
+            try {
+                // pick the crime with the highest EV/sec at current stats
+                let best = null;
+                for (const c of CRIMES) {
+                    try {
+                        const stats  = ns.singularity.getCrimeStats(c);
+                        const chance = ns.singularity.getCrimeChance(c);
+                        const seconds = (stats.time || 1) / 1000;
+                        const evPerSec = (chance * (stats.money || 0)) / seconds;
+                        if (!best || evPerSec > best.evPerSec) {
+                            best = { name: c, evPerSec, chance, money: stats.money || 0, time: stats.time || 0 };
+                        }
+                    } catch (e) {}   // crime name not recognized in this fork -- skip silently
+                }
+                if (!best) {
+                    log("  crime: no crime selectable");
+                } else {
+                    // only restart if we're not already committing this crime
+                    let alreadyAt = false;
+                    try {
+                        const cur = ns.singularity.getCurrentWork();
+                        // crime shape varies by version -- check both common forms
+                        const isCrime = cur && (cur.type === "CRIME" || cur.type === "Crime" || cur.type === "CrimeWork");
+                        const matches = isCrime && (cur.crimeType === best.name || cur.crime === best.name);
+                        if (matches) alreadyAt = true;
+                    } catch (e) {}
+                    if (!alreadyAt) {
+                        ns.singularity.commitCrime(best.name, FOCUS);
+                        log("  crime start: " + best.name + "  "
+                            + (best.chance * 100).toFixed(0) + "% \u00d7 $" + fmt(best.money)
+                            + " = $" + fmt(best.evPerSec) + "/s ev");
+                    } else {
+                        log("  crime: " + best.name + " (running, ev $" + fmt(best.evPerSec) + "/s)");
+                    }
+                }
+            } catch (e) { log("  [crime phase error] " + e); }
+        } else if (ENABLE_WORK) {
             try {
                 const me = ns.getPlayer().factions;
                 const target = WORK_PRIORITY.find(f => me.includes(f));
