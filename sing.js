@@ -30,7 +30,7 @@ export async function main(ns) {
     const ENABLE_CRIME     = true;        // commit crime when cash < CASH_FLOOR
 
     const CASH_RESERVE = 1_000_000;   // never let cash drop below this from purchases
-    const CASH_FLOOR   = 5_000_000;   // crime when cash below this; faction work above
+    const CASH_FLOOR   = 500_000;   // crime when cash below this; faction work above
     const FOCUS        = true;        // true = 2x rep rate, blocks manual UI activity
     const LOOP_MS      = 5000;        // seconds between loop iterations
 
