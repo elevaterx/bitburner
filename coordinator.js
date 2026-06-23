@@ -2,7 +2,12 @@
 export async function main(ns) {
     const numTargets   = Number(ns.args[0]) || 6;     // max targets to bring online
     const levelRatio   = Number(ns.args[1]) || 0.5;   // target required-level <= ratio * your level
-    const HOME_RESERVE = 24;     // GB kept free on home for this coordinator + diagnostics
+    const BATCH_TARGETS = Number(ns.args[3]) || 0;    // top-value PREPPED servers to hand to bbatch2 (0 = off).
+                                 // 4th CLI arg: `run coordinator.js <numTargets> <levelRatio> <digTargets> <batchTargets>`.
+                                 // These are dropped from prep-and-hold and run on overlapping HWGW batches instead.
+    const BATCH_FRAC = 0.05, BATCH_GAP = 200, BATCH_PERIOD_MULT = 16;   // sparse/safe batch density (tune in-file)
+    const HOME_RESERVE = 24 + 14 * BATCH_TARGETS;   // GB kept free on home: coordinator + diagnostics, plus room
+                                 // for each bbatch2 controller (~11-14GB) that runs on home
     const STEAL_FRAC   = 0.25;   // fraction of a target's money each hack pass skims; one knob for every server
     const PREP_MARGIN  = 1.5;    // prep threads over the bare grow+weaken need, for reactive-timing slack
     const VALUE_FLOOR  = 0.02;   // skip harvesting any target worth < this fraction of your richest one
@@ -97,7 +102,13 @@ export async function main(ns) {
             // but ADMISSION stays on static max-money: the value floor is relative to the richest
             // earner (explicit max, not harvest[0]), so a server can't flip in/out of the set as
             // its score drifts -- that drift is exactly what would thrash the rebalance key.
-            let harvest = [...preppedSet].sort(byScore);
+            // batch handoff: the top BATCH_TARGETS prepped servers by score go to their own bbatch2
+            // controllers (spawned after reconcile, below) and are removed from prep-and-hold here, so the
+            // coordinator deploys no prep/hack to them. digList already excludes them (they're prepped).
+            const ranked = [...preppedSet].sort(byScore);
+            const batchSet = BATCH_TARGETS > 0 ? ranked.slice(0, BATCH_TARGETS) : [];
+            const batchSetS = new Set(batchSet);
+            let harvest = ranked.filter(t => !batchSetS.has(t));
             const bestMoney = harvest.length ? Math.max(...harvest.map(t => ns.getServerMaxMoney(t))) : 0;
             harvest = harvest.filter(t => ns.getServerMaxMoney(t) >= VALUE_FLOOR * bestMoney)
                              .slice(0, numTargets + STICKY_EXTRA);
@@ -186,14 +197,27 @@ export async function main(ns) {
                 if (worth(want[t].prep, r.prep)) place(ns, pool, PREP, want[t].prep - r.prep, t);
             }
 
+            // --- batch controllers: ensure one bbatch2 per batch target; drop stale ones. The reconcile
+            // pass above already cleared any prep/hold workers from servers that just entered batchSet, so
+            // the batcher takes over a clean server. bbatch2 self-preps and self-corrects from here. ---
+            if (BATCH_TARGETS > 0) {
+                const runningBatchers = new Map();   // target -> pid
+                for (const p of ns.ps("home")) if (p.filename === "bbatch2.js" && p.args[0]) runningBatchers.set(p.args[0], p.pid);
+                for (const t of batchSet) {
+                    if (!runningBatchers.has(t)) ns.exec("bbatch2.js", "home", 1, t, BATCH_FRAC, BATCH_GAP, BATCH_PERIOD_MULT);
+                }
+                for (const [t, pid] of runningBatchers) if (!batchSetS.has(t)) ns.kill(pid);
+            }
+
             // log only when the HARVEST set changes (meaningful events); the dig-list reshuffle no longer
             // tears anything down, so it isn't worth a line every loop
-            const hkey = [...harvest].sort().join(",");
+            const hkey = [...harvest].sort().join(",") + "|B:" + [...batchSet].sort().join(",");
             if (hkey !== lastKey) {
                 lastKey = hkey;
                 const idle = pool.reduce((s, r) => s + r.free, 0);
                 const crewStr = harvest.map(t => t + "(h" + want[t].hack + "/p" + want[t].prep + ")").join(" ");
                 ns.tprint("coordinator @L" + L + ": harvest " + (crewStr || "(none)")
+                    + (batchSet.length ? "  batch[" + batchSet.length + "] " + batchSet.join(",") : "")
                     + "  dig[" + digList.length + "] " + (digList.join(",") || "(none)")
                     + "  cap " + totalCap + "t  idle " + idle + "t");
             }

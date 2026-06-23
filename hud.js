@@ -43,12 +43,15 @@ export async function main(ns) {
         }
 
         // --- tally workers + income per target, count rooted + contracts ---
-        const data = {};
-        let totalPrep = 0, totalHack = 0, rooted = 0, contracts = 0;
+        const data = {};        // prep-and-hold per target
+        const batchData = {};   // batch per target: { threads, income }
+        const batchTargets = new Set();   // targets with a bbatch2 controller running
+        const BATCH_WORKERS = new Set(["bhack.js", "bgrow.js", "bweaken.js"]);
+        let totalPrep = 0, totalHack = 0, totalBatch = 0, rooted = 0, contracts = 0;
         for (const host of all) {
             if (ns.hasRootAccess(host)) rooted++;
             try { contracts += ns.ls(host, ".cct").length; } catch (e) {}
-            const hackHere = new Set();
+            const hackHere = new Set(), bhackHere = new Set();
             for (const p of ns.ps(host)) {
                 const t = p.args[0];
                 if (!t) continue;
@@ -61,9 +64,20 @@ export async function main(ns) {
                     data[t].hack += p.threads;
                     totalHack += p.threads;
                     hackHere.add(t);
+                } else if (BATCH_WORKERS.has(p.filename)) {
+                    if (!batchData[t]) batchData[t] = { threads: 0, income: 0 };
+                    batchData[t].threads += p.threads;
+                    totalBatch += p.threads;
+                    if (p.filename === "bhack.js") bhackHere.add(t);
+                } else if (p.filename === "bbatch2.js") {
+                    batchTargets.add(t);
                 }
             }
             for (const t of hackHere) data[t].income += ns.getScriptIncome("h.js", host, t);
+            for (const t of bhackHere) {
+                if (!batchData[t]) batchData[t] = { threads: 0, income: 0 };
+                batchData[t].income += ns.getScriptIncome("bhack.js", host, t);
+            }
         }
 
         // --- pool capacity (idle threads = free RAM now; total = idle + deployed) ---
@@ -79,7 +93,7 @@ export async function main(ns) {
             if (free > 0) idle += free;
         }
         const deployed = totalPrep + totalHack;
-        const total = idle + deployed;
+        const total = idle + deployed + totalBatch;
 
         // --- globals ---
         const lvl = ns.getHackingLevel();
@@ -115,18 +129,38 @@ export async function main(ns) {
             return { t, mon, sec, prep: data[t].prep, hack: data[t].hack, income: data[t].income };
         });
 
+        // --- batched targets (union of controllers + any running batch workers) ---
+        const batchAll = new Set([...batchTargets, ...Object.keys(batchData)]);
+        let batchIncome = 0;
+        const batchMeta = [...batchAll].map(t => {
+            const bd = batchData[t] || { threads: 0, income: 0 };
+            batchIncome += bd.income;
+            const max = ns.getServerMaxMoney(t);
+            const mon = max > 0 ? (ns.getServerMoneyAvailable(t) / max * 100) : 0;
+            const sec = ns.getServerSecurityLevel(t) - ns.getServerMinSecurityLevel(t);
+            return { t, mon, sec, threads: bd.threads, income: bd.income, prepping: !batchData[t] || bd.threads === 0 };
+        }).sort((a, b) => (b.income - a.income) || (b.threads - a.threads));
+
         // --- text snapshot for the Copy button ---
         const lines = [];
-        lines.push("L" + lvl + "  $" + fmt(cash) + "  farm +$" + fmt(liveIncome) + "/s  share " + shareDisp);
-        lines.push("threads: total " + grp(total) + "  deployed " + grp(deployed)
-            + " (" + grp(totalPrep) + " prep / " + grp(totalHack) + " hack)  idle " + grp(idle));
+        lines.push("L" + lvl + "  $" + fmt(cash) + "  income +$" + fmt(liveIncome) + "/s (batch +$" + fmt(batchIncome) + "/s)  share " + shareDisp);
+        lines.push("threads: total " + grp(total) + "  prep " + grp(totalPrep) + "  hack " + grp(totalHack)
+            + "  batch " + grp(totalBatch) + "  idle " + grp(idle));
         lines.push("rooted " + rooted + "  pserv " + pserv + "  contracts " + contracts
             + "  cloud " + fmtRam(cloudRam) + (cloudMax ? " / " + fmtRam(cloudMax) : ""));
         lines.push("");
-        lines.push(pad("TARGET", 20) + padL("MON%", 6) + padL("SEC", 7) + padL("PREP", 8) + padL("HACK", 7) + padL("$/s", 9));
+        lines.push(pad("HARVEST", 20) + padL("MON%", 6) + padL("SEC", 7) + padL("PREP", 8) + padL("HACK", 7) + padL("$/s", 9));
         for (const r of rowMeta) {
             lines.push(pad(r.t, 20) + padL(r.mon.toFixed(1), 6) + padL("+" + r.sec.toFixed(1), 7)
                 + padL(grp(r.prep), 8) + padL(grp(r.hack), 7) + padL(fmt(r.income), 9));
+        }
+        if (batchMeta.length) {
+            lines.push("");
+            lines.push(pad("BATCH", 20) + padL("MON%", 6) + padL("SEC", 7) + padL("THR", 9) + padL("$/s", 9));
+            for (const r of batchMeta) {
+                lines.push(pad(r.t, 20) + padL(r.mon.toFixed(1), 6) + padL("+" + r.sec.toFixed(1), 7)
+                    + padL(grp(r.threads), 9) + padL(r.prepping ? "prep" : fmt(r.income), 9));
+            }
         }
         const snapshot = lines.join("\n");
 
@@ -153,15 +187,16 @@ export async function main(ns) {
         const poolTable = h("table", { style: { borderCollapse: "collapse", fontSize: "12px", marginBottom: "8px" } },
             h("tbody", null,
                 prow(lc("Level"),    vc(String(lvl)),         lc("Cash"),      vc("$" + fmt(cash))),
-                prow(lc("Farm/s"),   vc("+$" + fmt(liveIncome)), lc("Share"),   vc(shareDisp)),
+                prow(lc("Income/s"), vc("+$" + fmt(liveIncome)), lc("Batch/s"), vc("+$" + fmt(batchIncome))),
                 prow(lc("Total"),    vc(grp(total) + "t"),    lc("Idle"),      vc(grp(idle) + "t")),
                 prow(lc("Prep"),     vc(grp(totalPrep)),      lc("Hack"),      vc(grp(totalHack))),
+                prow(lc("Batch thr"),vc(grp(totalBatch)),     lc("Share"),     vc(shareDisp)),
                 prow(lc("Rooted"),   vc(String(rooted)),      lc("Pserv"),     vc(String(pserv))),
                 prow(lc("Contracts"),vc(String(contracts)),   lc("Cloud RAM"), vc(fmtRam(cloudRam) + (cloudMax ? " / " + fmtRam(cloudMax) : "")))
             )
         );
 
-        // --- REGION: farm table (per-target) ---
+        // --- REGION: harvest table (prep-and-hold, per-target) ---
         const th = (s, align) => h("th", { style: { textAlign: align, padding: "2px 12px 4px 0", borderBottom: "1px solid " + muted, whiteSpace: "nowrap" } }, s);
         const td = (s, align) => h("td", { style: { textAlign: align, padding: "1px 12px 1px 0", whiteSpace: "nowrap" } }, s);
         const farmBody = rowMeta.length
@@ -172,18 +207,35 @@ export async function main(ns) {
                 td(grp(r.prep), "right"),
                 td(grp(r.hack), "right"),
                 td(fmt(r.income), "right")))
-            : [h("tr", { key: "_none" }, h("td", { colSpan: 6, style: { color: muted, padding: "4px 0" } }, "(no farm workers deployed yet)"))];
-        const farmTable = h("table", { style: { borderCollapse: "collapse", fontSize: "12px" } },
+            : [h("tr", { key: "_none" }, h("td", { colSpan: 6, style: { color: muted, padding: "4px 0" } }, "(no harvest workers deployed)"))];
+        const farmTable = h("table", { style: { borderCollapse: "collapse", fontSize: "12px", marginBottom: batchMeta.length ? "10px" : "0" } },
             h("thead", null, h("tr", null,
-                th("TARGET", "left"), th("MON%", "right"), th("SEC", "right"),
+                th("HARVEST", "left"), th("MON%", "right"), th("SEC", "right"),
                 th("PREP", "right"), th("HACK", "right"), th("$/s", "right"))),
             h("tbody", null, ...farmBody)
         );
 
+        // --- REGION: batch table (overlapping HWGW per target); omitted entirely when no batchers run ---
+        let batchTable = null;
+        if (batchMeta.length) {
+            const bbody = batchMeta.map(r => h("tr", { key: "b_" + r.t },
+                td(r.t, "left"),
+                td(r.mon.toFixed(1), "right"),
+                td("+" + r.sec.toFixed(1), "right"),
+                td(grp(r.threads), "right"),
+                td(r.prepping ? "prep" : ("$" + fmt(r.income)), "right")));
+            batchTable = h("table", { style: { borderCollapse: "collapse", fontSize: "12px" } },
+                h("thead", null, h("tr", null,
+                    th("BATCH", "left"), th("MON%", "right"), th("SEC", "right"),
+                    th("THREADS", "right"), th("$/s", "right"))),
+                h("tbody", null, ...bbody)
+            );
+        }
+
         // --- render the whole HUD as one tree ---
         ns.clearLog();
         ns.printRaw(h("div", { style: { fontFamily: "inherit", fontSize: "12px" } },
-            buttonsRegion, poolTable, farmTable));
+            buttonsRegion, poolTable, farmTable, batchTable));
 
         await ns.sleep(2000);
     }
