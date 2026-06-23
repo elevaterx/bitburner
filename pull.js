@@ -11,7 +11,7 @@ export async function main(ns) {
         "puzzles.js", "purchaser.js", "cleanup.js",
         "xp.js", "xpfarm.js", "sh.js", "shareall.js",
         "diagnose-income.js", "earners.js", "backdoors.js",
-        "sing.js", "hacknet.js",
+        "sing.js", "hacknet.js", "hud1.js", "hud2.js", "cloudstat.js", "fatcheck.js"
         // --- HWGW batcher ---
         "batch-math.js", "batch-live.js", "sharecap.js",
         "bhack.js", "bgrow.js", "bweaken.js",
