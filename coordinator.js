@@ -256,7 +256,14 @@ export async function main(ns) {
 
             // start deficits: hack first (income), then prep (harvest maintenance + digs). A deadband skips
             // sub-10% gaps so small crew-size drift between loops doesn't cause constant kill/restart churn.
-            const worth = (w, have) => (w - have) > Math.max(3, Math.ceil(w * 0.10));
+            // BUT: the deadband must NOT block initial placement. If have=0 and want>0, always place --
+            // otherwise small crews (1-2 threads) never get placed because want < deadband floor. This
+            // bit BN4 hard: at high level on small reachable servers, crewFor often computes hackT=1-2,
+            // and the deadband prevented harvest from ever firing on those servers.
+            const worth = (w, have) => {
+                if (have === 0 && w > 0) return true;
+                return (w - have) > Math.max(3, Math.ceil(w * 0.10));
+            };
             for (const t of harvest) {
                 const r = remain[t] || { hack: 0, prep: 0 };
                 if (worth(want[t].hack, r.hack)) place(ns, pool, HACK, want[t].hack - r.hack, t);
