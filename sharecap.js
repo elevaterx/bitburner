@@ -20,6 +20,7 @@
  *  @param {NS} ns */
 export async function main(ns) {
     const CAP = Number(ns.args[0]) || 120000;
+    const HOME_RESERVE = Number(ns.args[1]) || 64;   // GB kept free on home for controllers + farm headroom
     const WORKER = "sh.js";
     ns.disableLog("ALL");
 
@@ -49,15 +50,19 @@ export async function main(ns) {
             for (const p of ns.ps(h)) if (p.filename === WORKER) cur += p.threads;
         }
 
-        // top up toward the cap on free RAM only -- never displace the farm, never touch home
+        // top up toward the cap on free RAM. Use home too (leaving HOME_RESERVE for controllers +
+        // farm growth) -- post-reset, before cloud is re-bought, home is the only large server, so
+        // skipping it would strand all the idle RAM. The CAP still bounds total share threads, so set
+        // it below your idle pool to leave the farm room to grow.
         let deficit = CAP - cur;
         if (deficit > 0) {
             let added = 0;
             for (const h of all) {
                 if (deficit <= 0) break;
-                if (h === "home") continue;                       // controllers live on home
                 if (!ns.hasRootAccess(h) || ns.getServerMaxRam(h) <= 0) continue;
-                const free = Math.floor((ns.getServerMaxRam(h) - ns.getServerUsedRam(h)) / workerRam);
+                let avail = ns.getServerMaxRam(h) - ns.getServerUsedRam(h);
+                if (h === "home") avail -= HOME_RESERVE;
+                const free = Math.floor(avail / workerRam);
                 const want = Math.min(free, deficit);
                 if (want > 0) {
                     ns.scp(WORKER, h, "home");
