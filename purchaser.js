@@ -1,13 +1,14 @@
 /** @param {NS} ns */
 export async function main(ns) {
     ns.disableLog("ALL");
-    const spendFrac = Number(ns.args[0]) || 0.5;   // max fraction of cash spent on one buy/upgrade
+    const spendFrac = Number(ns.args[0]) || 0.5;       // max fraction of (cash - reserve) spent per loop
+    const CASH_RESERVE = Number(ns.args[1]) || 500_000; // never let cash drop below this
     const RAM_CAP = ns.cloud.getRamLimit();
     const LIMIT = ns.cloud.getServerLimit();
 
     while (true) {
         const cash = ns.getPlayer().money;
-        const budget = cash * spendFrac;
+        const budget = Math.max(0, (cash - CASH_RESERVE) * spendFrac);
         const names = ns.cloud.getServerNames();
         let acted = false;
 
