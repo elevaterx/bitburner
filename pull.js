@@ -10,7 +10,7 @@ export async function main(ns) {
         "farm-status.js", "status.js", "hud.js",
         "puzzles.js", "purchaser.js", "cleanup.js",
         "xp.js", "xpfarm.js", "sh.js", "shareall.js",
-        "diagnose-income.js", "earners.js",
+        "diagnose-income.js", "earners.js", "backdoors.js"
         // --- HWGW batcher ---
         "batch-math.js", "batch-live.js", "sharecap.js",
         "bhack.js", "bgrow.js", "bweaken.js",
