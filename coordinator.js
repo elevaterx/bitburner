@@ -137,7 +137,11 @@ export async function main(ns) {
                 .sort((a, b) => ns.getServerMaxMoney(b) - ns.getServerMaxMoney(a));
             const batchSet = BATCH_MAX > 0 ? fatPrepped.slice(0, BATCH_MAX) : [];
             const batchSetS = new Set(batchSet);
-            const HOME_RESERVE = 24 + 14 * batchSet.length;   // auto-sized to the live batcher count
+            const HOME_RESERVE = 40 + 14 * batchSet.length;   // auto-sized to the live batcher count.
+                                                              // 40 GB base ensures non-coord scripts (sing,
+                                                              // hud1, hud2, etc.) always have room to launch
+                                                              // without juggling. Coord won't claim it for
+                                                              // workers; other scripts can still use it.
             let harvest = ranked.filter(t => !batchSetS.has(t));
             const bestMoney = harvest.length ? Math.max(...harvest.map(t => ns.getServerMaxMoney(t))) : 0;
             harvest = harvest.filter(t => ns.getServerMaxMoney(t) >= VALUE_FLOOR * bestMoney)
