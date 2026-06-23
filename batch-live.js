@@ -80,11 +80,17 @@ export async function prepTarget(ns, target, log = () => {}) {
   for (let pass = 1; pass < 100000; pass++) {
     const p = getParams(ns, target);
     if (p.prepped) { log("PREPPED " + target); return true; }
+    // Wait on the CURRENT-security weaken time. p.weakenTime is computed at MIN security (correct for
+    // batch scheduling, where ops run on a prepped server) -- but during prep the server is still dirty
+    // and op times scale with current security, so sleeping p.weakenTime under-waits and re-fires the
+    // same pass before the weaken lands. ns.getWeakenTime reads the live (dirty) security, so it's right
+    // here regardless of Formulas.
+    const waitMs = ns.getWeakenTime(target) + 400;
     if (p.curSec > p.minSec + 0.01) {
       const wt = weakenThreadsToMin(p.curSec, p.minSec, p.weakenPerThread);
       const got = dispatch(ns, "bweaken.js", wt, target, 0);
       log(`prep ${pass}: weaken ${got}/${wt}  sec ${p.curSec.toFixed(2)}->${p.minSec.toFixed(2)}`);
-      await ns.sleep(p.weakenTime + 400);
+      await ns.sleep(waitMs);
     } else {
       const mult = growMultiplierToMax(p.curMoney, p.maxMoney);
       const gt = growThreadsForMultiplier(ns, target, mult, p);
@@ -92,7 +98,7 @@ export async function prepTarget(ns, target, log = () => {}) {
       const wt = Math.ceil(gGot * GROW_SEC_PER_THREAD / p.weakenPerThread);
       const wGot = dispatch(ns, "bweaken.js", wt, target, 0);
       log(`prep ${pass}: grow ${gGot}/${gt} (${(100*p.curMoney/p.maxMoney).toFixed(1)}%) +weaken ${wGot}`);
-      await ns.sleep(p.weakenTime + 400);
+      await ns.sleep(waitMs);
     }
   }
   return false;
