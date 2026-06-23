@@ -5,7 +5,7 @@ export async function main(ns) {
     const BATCH_TARGETS = Number(ns.args[3]) || 0;    // top-value PREPPED servers to hand to bbatch2 (0 = off).
                                  // 4th CLI arg: `run coordinator.js <numTargets> <levelRatio> <digTargets> <batchTargets>`.
                                  // These are dropped from prep-and-hold and run on overlapping HWGW batches instead.
-    const BATCH_FRAC = 0.05, BATCH_GAP = 200, BATCH_PERIOD_MULT = 4;   // sparse/safe batch density (tune in-file)
+    const BATCH_FRAC = 0.05, BATCH_GAP = 200, BATCH_PERIOD_MULT = 6;   // sparse/safe batch density (tune in-file)
     const HOME_RESERVE = 24 + 14 * BATCH_TARGETS;   // GB kept free on home: coordinator + diagnostics, plus room
                                  // for each bbatch2 controller (~11-14GB) that runs on home
     const STEAL_FRAC   = 0.25;   // fraction of a target's money each hack pass skims; one knob for every server
