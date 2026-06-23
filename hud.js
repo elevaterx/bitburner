@@ -266,6 +266,7 @@ export async function main(ns) {
                 prow(lc("Total"),    vc(grp(total) + "t"),                        lc("Idle"),      vc(grp(idle) + "t")),
                 prow(lc("Prep"),     vc(grp(totalPrep)),                          lc("Hack"),      vc(grp(totalHack))),
                 prow(lc("Batch thr"),vc(grp(totalBatch)),                         lc("Share"),     vc(shareDisp, shareColor)),
+                prow(lc("Harvesting"),vc(String(rowMeta.length)),                 lc("Batching"),  vc(String(batchMeta.length))),
                 prow(lc("Rooted"),   vc(String(rooted)),                          lc("Pserv"),     vc(String(pserv))),
                 prow(lc("Contracts"),vc(String(contracts)),                       lc("Cloud RAM"), vc(fmtRam(cloudRam) + (cloudMax ? " / " + fmtRam(cloudMax) : "")))
             )
