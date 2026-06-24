@@ -46,9 +46,12 @@ export async function main(ns) {
                     // only the controller would orphan the workers, leaving their RAM held with no
                     // manager -- so we must sweep sh.js across every host. Leaves coord, prep/h
                     // workers, sing, huds untouched.
+                    // NOTE: own local scan -- the main loop's `all` isn't built until after this block.
+                    const sseen = new Set(["home"]), sq = ["home"], shosts = ["home"];
+                    while (sq.length) { const c = sq.shift(); for (const n of ns.scan(c)) if (!sseen.has(n)) { sseen.add(n); sq.push(n); shosts.push(n); } }
                     let ctrl = ns.scriptKill("sharecap.js", "home");
                     let workerProcs = 0;
-                    for (const host of all) {
+                    for (const host of shosts) {
                         for (const p of ns.ps(host)) {
                             if (p.filename === "sh.js") { ns.kill(p.pid); workerProcs++; }
                         }
@@ -63,9 +66,12 @@ export async function main(ns) {
                     // full reset: kill coord AND all prep/h workers fleet-wide for a clean re-allocation.
                     // Does NOT auto-restart -- you restart coord (or via the restart button) to re-place
                     // from scratch. Use when you want better server selection, not just a process bounce.
+                    // NOTE: own local scan -- the main loop's `all` isn't built until after this block.
+                    const rseen = new Set(["home"]), rq = ["home"], rhosts = ["home"];
+                    while (rq.length) { const c = rq.shift(); for (const n of ns.scan(c)) if (!rseen.has(n)) { rseen.add(n); rq.push(n); rhosts.push(n); } }
                     ns.scriptKill("coordinator.js", "home");
                     let killed = 0;
-                    for (const host of all) {
+                    for (const host of rhosts) {
                         for (const p of ns.ps(host)) {
                             if (p.filename === "prep.js" || p.filename === "h.js") { ns.kill(p.pid); killed++; }
                         }
