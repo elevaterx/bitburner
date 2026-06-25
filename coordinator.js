@@ -5,36 +5,64 @@ export async function main(ns) {
     // (not what's on disk or in the repo). This is the immediate tell for a stale/deferred pull:
     // if the snapshot's coord version lags the version you just pushed, the running process didn't
     // pick up the new code (kill coord -> pull -> reload -> rerun). Format: vMAJOR.MINOR (date).
-    const COORD_VERSION = "v2.7 (2026-06-25)";   // + Formulas.exe-aware prep math (accurate grow threads, falls back if absent); arg-comment usage examples
+    const COORD_VERSION = "v2.8 (2026-06-25)";   // + named scenario presets (run coordinator.js income / rebuild / repgrind / digheavy / safe)
 
     // ================================ ARG REFERENCE (read me) ================================
-    //   run coordinator.js [numTargets] [levelRatio] [digSlots] [batchMax] [xpw] [digBudget]
-    //                          40           0.9          0          7         1       0.85       <- defaults
+    //   TWO WAYS TO LAUNCH:
     //
-    //   Args are POSITIONAL: to set a later one you must fill the earlier ones (use the defaults).
-    //   You can OMIT trailing args to keep their defaults. Common launches:
-    //     run coordinator.js                          -> all defaults (xpw ON, balanced)
-    //     run coordinator.js 40 0.9 0 7 0             -> income mode: xpw OFF (frees its pool for $)
-    //     run coordinator.js 40 0.9 0 7 0 0.95        -> income mode + push almost all pool into digs
-    //     run coordinator.js 40 0.9 0 0 0             -> income mode, batching OFF too (pure harvest/dig)
-    //     run coordinator.js 40 0.9 0 7 1             -> rebuild mode: xpw ON (level up on idle pool)
+    //   (A) NAMED PRESET (easy) -- recommended for everyday use:
+    //         run coordinator.js <preset> [overrides...]
+    //       Presets (see PRESETS table just below for exact values):
+    //         income     post-install earning mode: xpw OFF, full pool to harvest+digs. The default workhorse.
+    //         rebuild    fresh post-install: xpw ON (level up on idle pool while the farm rebuilds).
+    //         repgrind   running faction share for rep: leave more harvest headroom, xpw ON.
+    //         digheavy   push almost the whole pool into prepping fat servers (fast prep, less harvest headroom).
+    //         safe       conservative: lower level ratio (only well-out-leveled targets), xpw OFF.
+    //       Override flags can follow a preset to tweak one thing (precedence: preset first, then flags):
+    //         xpw / noxpw     force leveling on/off       nobatch         turn batching off
+    //         dig=0.9         set dig-budget fraction      targets=25      cap harvest targets
+    //       Examples:
+    //         run coordinator.js income                 -> the everyday earning launch
+    //         run coordinator.js rebuild                -> just installed augs, rebuilding + leveling
+    //         run coordinator.js income digheavy        -> earning but prep fat servers harder
+    //         run coordinator.js income dig=0.95        -> earning, push 95% of pool into digs
+    //         run coordinator.js repgrind noxpw         -> rep share, but no leveling fill
+    //         run coordinator.js help                   -> print the preset table and exit
     //
-    //   [0] numTargets  max harvest servers. Default 40 (high on purpose -- filters below trim it).
-    //   [1] levelRatio  only target servers whose required level <= this * your level. 0.9 = safe margin.
-    //   [2] digSlots    how many servers prep in parallel. 0 = AUTO (sizes from the pool). Set a number to force.
-    //   [3] batchMax    cap on HWGW batchers. 0 = batching off. Actual count auto-ramps up to this as servers prep.
-    //   [4] xpw         leveling fill: 1/omitted = ON (idle pool -> XP), 0 = OFF (idle pool -> income). Use 0 once high-level.
-    //   [5] digBudget   max fraction of pool spent prepping (digging) per loop. 0.85 default. Higher = prep faster,
-    //                   leave less for harvest headroom. Lower = protect harvest more. Flex this live to tune the split.
+    //   (B) RAW POSITIONAL (full control) -- numbers in fixed positions:
+    //         run coordinator.js [numTargets] [levelRatio] [digSlots] [batchMax] [xpw] [digBudget]
+    //                               40           0.9          0          7         1       0.85     <- defaults
+    //       Args are POSITIONAL: to set a later one, fill the earlier ones. Omit trailing args to keep defaults.
+    //         [0] numTargets  max harvest servers. 40 default (filters below trim it).
+    //         [1] levelRatio  only target servers whose required level <= this * your level. 0.9 = safe margin.
+    //         [2] digSlots    parallel prep slots. 0 = AUTO (sizes from pool).
+    //         [3] batchMax    cap on HWGW batchers. 0 = off. Auto-ramps up to this as servers prep.
+    //         [4] xpw         leveling fill: 1 = ON (idle pool -> XP), 0 = OFF (idle pool -> income).
+    //         [5] digBudget   fraction of pool spent prepping per loop. 0.85 default. Higher = prep faster.
     // =========================================================================================
+    //
+    // PRESETS: each maps to the six positional args [numTargets, levelRatio, digSlots, batchMax, xpw, digBudget].
+    // Edit values here to retune a preset; names are what you type. Adjust freely as scenarios evolve.
+    const PRESETS = {
+        income:   [40, 0.9,  0, 7, 0, 0.85],   // earning mode, no leveling -- the default workhorse
+        rebuild:  [40, 0.9,  0, 7, 1, 0.85],   // post-install: level up on idle pool while rebuilding
+        repgrind: [40, 0.9,  0, 7, 1, 0.60],   // faction share for rep: more harvest headroom, leveling on
+        digheavy: [40, 0.9,  0, 7, 0, 0.95],   // push almost all pool into prepping fat servers
+        safe:     [40, 0.75, 0, 7, 0, 0.85],   // conservative: only well-out-leveled targets
+    };
+    // Resolve named-preset launches into the positional args[] the rest of the script reads. If args[0]
+    // is a number (or absent), this is a no-op and raw positional parsing runs unchanged.
+    const resolved = resolveArgs(ns, PRESETS, COORD_VERSION);
+    if (resolved === null) return;            // 'help' was requested; table printed, exit.
+    const A = resolved;                       // A[0..5] = the six positional args, post-preset-expansion
 
-    const numTargets   = Number(ns.args[0]) || 40;    // [0] max harvest targets. e.g. `...js 25` caps harvest at 25.
+    const numTargets   = Number(A[0]) || 40;    // [0] max harvest targets. e.g. `...js 25` caps harvest at 25.
                                  // High default is fine: the value-floor + level gates below filter, so a high cap
                                  // just stops artificially starving harvest. Lower it only to deliberately focus fewer servers.
-    const levelRatio   = Number(ns.args[1]) || 0.9;   // [1] only harvest servers whose required hacking level is
+    const levelRatio   = Number(A[1]) || 0.9;   // [1] only harvest servers whose required hacking level is
                                  // <= this * your level. 0.9 leaves a safety margin (you out-level targets, so hacks
                                  // land reliably). e.g. `...js 40 0.75` is more conservative; 1.0 targets right up to your level.
-    const BATCH_MAX = ns.args[3] !== undefined ? Number(ns.args[3]) : 7;   // [3] CAP on HWGW batchers (0 = batching
+    const BATCH_MAX = A[3] !== undefined ? Number(A[3]) : 7;   // [3] CAP on HWGW batchers (0 = batching
                                  // off). e.g. `...js 40 0.9 0 0` turns batching off; `...js 40 0.9 0 12` allows up to 12.
                                  // The ACTUAL count auto-adjusts each loop: min(BATCH_MAX, number of PREPPED servers
                                  // worth batching, i.e. maxMoney >= BATCH_FLOOR). So a cold start runs at 0 batchers
@@ -52,7 +80,7 @@ export async function main(ns) {
     const PREP_MARGIN  = 1.5;    // prep threads over the bare grow+weaken need, for reactive-timing slack
     const VALUE_FLOOR  = 0.02;   // skip harvesting any target worth < this fraction of your richest one
     const STICKY_EXTRA = 3;      // keep up to numTargets + this many prepped earners harvesting during a handoff
-    const DIG_SLOTS_ARG = ns.args[2] !== undefined ? Number(ns.args[2]) : 0;   // [2] parallel dig (prep) slots.
+    const DIG_SLOTS_ARG = A[2] !== undefined ? Number(A[2]) : 0;   // [2] parallel dig (prep) slots.
                                  // 0/omitted = AUTO (sizes from the live pool -- recommended). e.g. `...js 40 0.9 5`
                                  // forces exactly 5 parallel digs. Pool-relative selection (below) auto-sizes when 0;
                                  // an explicit value overrides DIG_MAX_SLOTS (the parallel-dig ceiling).
@@ -73,7 +101,7 @@ export async function main(ns) {
                                     // some idle pool for faster prep, not perfect utilization. With
                                     // DIG_MIN_SLOTS=3 and budget 0.85, 3x0.30=0.90 > 0.85 so the budget
                                     // shares the 3rd dig's allocation (handled by the min-slot remainder).
-    const DIG_BUDGET_FRAC = ns.args[5] !== undefined ? Number(ns.args[5]) : 0.85;
+    const DIG_BUDGET_FRAC = A[5] !== undefined ? Number(A[5]) : 0.85;
                                     // max fraction of the pool spent on digs in total each loop, now
                                     // CLI-flexible: arg[5] (e.g. `coordinator.js 40 0.9 0 7 0 0.85`).
                                     // The rest is headroom for HARVEST (current income). NOTE: placement
@@ -97,7 +125,7 @@ export async function main(ns) {
     //     run their normal course; xpw is a tail filler that takes whatever pool is left and gives it back
     //     when those need to grow. Hacking XP only -- weaken/grow/hack don't train combat stats. Combat
     //     requires gym/crime; with Singularity (SF4, available now) sing.js can automate that separately.
-    const XP_ENABLE   = ns.args[4] !== undefined ? (Number(ns.args[4]) !== 0) : true;
+    const XP_ENABLE   = A[4] !== undefined ? (Number(A[4]) !== 0) : true;
                                        // master switch, now CLI-controllable: arg[4]=0 disables xpw.
                                        // run `coordinator.js 40 0.9 0 7 0` -> xpw OFF (frees its pool for
                                        // income; coord actively sweeps existing xpw workers, see below).
@@ -698,6 +726,53 @@ function killExcess(ns, procs, desired) {
 // the player's real multipliers -- exact. But Formulas.exe is LOST every aug install, so coord must
 // work without it too: if ns.formulas isn't available, fall back to growthAnalyze. Call hasFormulas()
 // once per loop, not per server, to avoid repeated try/catch cost.
+// expands named presets + override flags into positional args; handles help; passes raw args through.
+// Returns a 6-element array [numTargets, levelRatio, digSlots, batchMax, xpw, digBudget], or null if
+// 'help' was requested (caller should exit). args[0] non-numeric => preset mode; numeric/absent => raw.
+function resolveArgs(ns, PRESETS, version) {
+    const a = ns.args;
+    const first = a[0];
+    // raw positional mode: no args, or args[0] is a number -> pass straight through unchanged.
+    if (first === undefined || !isNaN(Number(first))) return a.slice();
+
+    const key = String(first).toLowerCase();
+    if (key === "help" || key === "?") {
+        ns.tprint("=== coordinator.js " + version + " presets ===");
+        ns.tprint("  run coordinator.js <preset> [overrides]");
+        ns.tprint("  presets: " + Object.keys(PRESETS).join(", "));
+        for (const [name, v] of Object.entries(PRESETS)) {
+            ns.tprint("    " + name.padEnd(9) + " -> targets=" + v[0] + " levelRatio=" + v[1] +
+                      " digSlots=" + v[2] + " batchMax=" + v[3] + " xpw=" + v[4] + " digBudget=" + v[5]);
+        }
+        ns.tprint("  override flags (after a preset): xpw | noxpw | nobatch | dig=<frac> | targets=<n> | level=<r> | batch=<n>");
+        ns.tprint("  raw positional still works: run coordinator.js 40 0.9 0 7 0 0.85");
+        return null;
+    }
+
+    const preset = PRESETS[key];
+    if (!preset) {
+        ns.tprint("ERROR: unknown preset '" + first + "'. Valid: " + Object.keys(PRESETS).join(", ") +
+                  ", or 'help'. Falling back to 'income'.");
+        return (PRESETS.income || [40, 0.9, 0, 7, 0, 0.85]).slice();
+    }
+    const out = preset.slice();   // copy so we don't mutate the table
+
+    // apply override flags (everything after the preset name); precedence: preset first, then flags.
+    for (let i = 1; i < a.length; i++) {
+        const f = String(a[i]).toLowerCase();
+        if (f === "xpw") out[4] = 1;
+        else if (f === "noxpw") out[4] = 0;
+        else if (f === "nobatch") out[3] = 0;
+        else if (f.startsWith("dig=")) { const v = Number(f.slice(4)); if (!isNaN(v)) out[5] = v; }
+        else if (f.startsWith("targets=")) { const v = Number(f.slice(8)); if (!isNaN(v)) out[0] = v; }
+        else if (f.startsWith("level=")) { const v = Number(f.slice(6)); if (!isNaN(v)) out[1] = v; }
+        else if (f.startsWith("batch=")) { const v = Number(f.slice(6)); if (!isNaN(v)) out[3] = v; }
+        else ns.tprint("WARN: ignoring unknown flag '" + a[i] + "'");
+    }
+    ns.tprint("coordinator: preset '" + key + "' -> [" + out.join(", ") + "]");
+    return out;
+}
+
 function hasFormulas(ns) {
     try { ns.formulas.hacking.growThreads; return ns.fileExists("Formulas.exe", "home"); }
     catch (e) { return false; }

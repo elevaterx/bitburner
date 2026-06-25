@@ -15,6 +15,7 @@ export async function main(ns) {
     const h = React.createElement;
     const HOME_RESERVE = 24;   // match coordinator: GB kept free on home
     let action = null;
+    let presetArg = null;      // coord preset name to pass when action === "preset"
     let pendingDump = null;    // "harvest" | "batch" -- printed to terminal next loop
     let statusText = "";       // updated each loop; click handler reads the latest snapshot
 
@@ -40,6 +41,11 @@ export async function main(ns) {
                     ns.scriptKill("coordinator.js", "home");
                     const pid = ns.run("coordinator.js", 1, ...cargs);
                     ns.toast(pid ? ("coord restarted " + (cargs.length ? cargs.join(" ") : "(defaults)")) : "coordinator.js not found", pid ? "success" : "error", 2500);
+                } else if (action === "preset") {
+                    // relaunch coord with a named scenario preset (presetArg set by the clicked button)
+                    ns.scriptKill("coordinator.js", "home");
+                    const pid = ns.run("coordinator.js", 1, presetArg);
+                    ns.toast(pid ? ("coord -> '" + presetArg + "' preset") : "coordinator.js not found", pid ? "success" : "error", 2500);
                 } else if (action === "hud2") {
                     const pid = ns.run("hud2.js");
                     ns.toast(pid ? "launched hud2" : "hud2.js not found or insufficient RAM", pid ? "info" : "error", 2500);
@@ -86,6 +92,7 @@ export async function main(ns) {
                 }
             } catch (e) { ns.toast("action error: " + e, "error", 4000); }
             action = null;
+            presetArg = null;
         }
 
         // --- BFS network scan ---
@@ -492,6 +499,15 @@ export async function main(ns) {
             ),
             panel("CONTROLLERS",
                 ...(ctrlRows.length === 0 ? [h("div", { style: { color: muted, fontSize: 11 } }, "(none)")] : ctrlRows)
+            ),
+            panel("COORD PRESET",
+                h("div", { style: { display: "flex", flexWrap: "wrap" } },
+                    btn("income", () => { action = "preset"; presetArg = "income"; }, incomeColor),
+                    btn("rebuild", () => { action = "preset"; presetArg = "rebuild"; }, hackColor),
+                    btn("repgrind", () => { action = "preset"; presetArg = "repgrind"; }, hackColor),
+                    btn("digheavy", () => { action = "preset"; presetArg = "digheavy"; }, hackColor),
+                    btn("safe", () => { action = "preset"; presetArg = "safe"; }, titleColor),
+                ),
             ),
             panel("CONTROLS",
                 h("div", { style: { display: "flex", flexWrap: "wrap" } },

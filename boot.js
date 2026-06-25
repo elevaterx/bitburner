@@ -21,8 +21,13 @@ export async function main(ns) {
     //   [1] purchaserFrac  cloud purchaser spend fraction. default 0 = purchaser OFF.
     //                      >0 enables purchaser at that frac (e.g. 0.5). Cloud doesn't persist
     //                      install AND spends cash, so it's OFF by default -- opt in deliberately.
+    //   [2] coordPreset    coordinator scenario preset. default 'income' (post-install earning mode).
+    //                      Any coord preset works: income | rebuild | repgrind | digheavy | safe.
+    //                      e.g. `run boot.js 120000 0 rebuild` -> share on, no purchaser, coord in rebuild mode.
+    //                      Note: if you want share for a rep grind, pair it with the 'repgrind' coord preset.
     const SHARE_CAP      = ns.args[0] !== undefined ? Number(ns.args[0]) : 120000;  // 0 disables share
     const PURCHASER_FRAC = ns.args[1] !== undefined ? Number(ns.args[1]) : 0;        // 0 = purchaser off
+    const COORD_PRESET   = ns.args[2] !== undefined ? String(ns.args[2]) : "income"; // coord scenario preset
     const PURCHASER_RES  = 500_000;   // purchaser cash floor (only used if purchaser enabled)
     const SETTLE_MS      = 600;       // pause between ordered launches so each claims RAM before the next
 
@@ -65,8 +70,8 @@ export async function main(ns) {
     }
 
     // ---- 4. coordinator: farm brain. Takes whatever pool remains after sharecap. ----
-    pid = ns.run("coordinator.js");
-    log(pid ? "coordinator.js up -- takes remaining pool" : "coordinator.js FAILED");
+    pid = ns.run("coordinator.js", 1, COORD_PRESET);
+    log(pid ? ("coordinator.js up (preset '" + COORD_PRESET + "') -- takes remaining pool") : "coordinator.js FAILED");
     await ns.sleep(SETTLE_MS);
 
     // ---- 5. ensure hud1 is running (launch only if absent; never kill it -- may be our caller) ----
