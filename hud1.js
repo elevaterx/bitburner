@@ -7,10 +7,11 @@
  *  and aug planning, launch hud2.js (Singularity-driven, RAM-expensive).
  *
  *  Must be added to pull.js. @param {NS} ns */
+import { applyLayout } from "winlayout.js";
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.ui.openTail();
-    ns.ui.resizeTail(560, 480);
+    await applyLayout(ns, "hud1", ns.pid);   // self-position to the preferred stack layout
     const React = globalThis.React;
     const h = React.createElement;
     // Home RAM reserved (not counted as available) -- must match coordinator.js's guardrail (25% of
@@ -49,6 +50,9 @@ export async function main(ns) {
                     ns.scriptKill("coordinator.js", "home");
                     const pid = ns.run("coordinator.js", 1, presetArg);
                     ns.toast(pid ? ("coord -> '" + presetArg + "' preset") : "coordinator.js not found", pid ? "success" : "error", 2500);
+                } else if (action === "arrange") {
+                    const pid = ns.run("arrange.js");
+                    ns.toast(pid ? "arranging windows..." : "arrange.js not found", pid ? "info" : "error", 2000);
                 } else if (action === "hud2") {
                     const pid = ns.run("hud2.js");
                     ns.toast(pid ? "launched hud2" : "hud2.js not found or insufficient RAM", pid ? "info" : "error", 2500);
@@ -527,6 +531,7 @@ export async function main(ns) {
                     btn("kill share", () => { action = "killshare"; }, warnColor),
                     btn("launch hud2", () => { action = "hud2"; }, titleColor),
                     btn("kill hud2", () => { action = "killhud2"; }, warnColor),
+                    btn("arrange", () => { action = "arrange"; }, titleColor),
                     btn("snapshot", () => {
                         // download statusText as a timestamped .txt via pure browser APIs.
                         // Safe inside an onClick (no ns calls). statusText is set each loop and

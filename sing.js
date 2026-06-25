@@ -21,6 +21,7 @@
  *  Must be added to pull.js's file list to deploy via pull on other hosts.
  *
  *  @param {NS} ns */
+import { applyLayout } from "winlayout.js";
 export async function main(ns) {
     // === CONFIG ===
     const ENABLE_INVITES   = true;
@@ -66,13 +67,16 @@ export async function main(ns) {
 
     // ordered priority: works highest-priority faction we're a member of. Daedalus first
     // because Red Pill is the BN exit gate; the rest stack rep for future aug purchases.
+    // NOTE: NiteSec promoted above Black Hand for the overnight rep grind -- NiteSec offers
+    // Neurotrainer II, Artificial Synaptic, Neural-Retention, CRTX42-AA, which Black Hand
+    // doesn't. Restore the original order (Black Hand above NiteSec) when ready to pivot.
     const WORK_PRIORITY = [
         "Daedalus",
         "Illuminati",
         "The Covenant",
         "BitRunners",
-        "The Black Hand",
         "NiteSec",
+        "The Black Hand",
         "CyberSec",
         "Tian Di Hui",
         "Netburners",
@@ -97,7 +101,7 @@ export async function main(ns) {
 
     ns.disableLog("ALL");
     ns.ui.openTail();
-    ns.ui.resizeTail(680, 380);
+    await applyLayout(ns, "sing", ns.pid);   // self-position to the preferred stack layout
 
     while (true) {
         const lines = [];

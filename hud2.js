@@ -6,10 +6,11 @@
  *  -- it's shown separately as a stacking level indicator with next-rep/cost).
  *
  *  Must be added to pull.js. @param {NS} ns */
+import { applyLayout } from "winlayout.js";
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.ui.openTail();
-    ns.ui.resizeTail(420, 380);
+    await applyLayout(ns, "hud2", ns.pid);   // self-position to the preferred stack layout
     const React = globalThis.React;
     const h = React.createElement;
     const S = ns.singularity;

@@ -32,6 +32,7 @@ export async function main(ns) {
     "diagnose-income.js", "earners.js", "backdoors.js",
     "ramstat.js", "sing.js", "hacknet.js", "digrank.js",
     "hud1.js", "hud2.js", "cloudstat.js", "fatcheck.js",
+    "winlayout.js", "arrange.js",
     // --- HWGW batcher ---
     "batch-math.js", "batch-live.js", "sharecap.js",
     "bhack.js", "bgrow.js", "bweaken.js",
