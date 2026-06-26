@@ -22,6 +22,11 @@ export async function main(ns) {
     let presetArg = null;      // coord preset name to pass when action === "preset"
     let pendingDump = null;    // "harvest" | "batch" -- printed to terminal next loop
     let statusText = "";       // updated each loop; click handler reads the latest snapshot
+    // --- XP/level rate tracking: rolling window of {t, xp, lvl} samples for a smoothed rate readout ---
+    // (smoothed over ~RATE_WINDOW_MS so the number is stable, not per-loop-noisy). Used to gauge the
+    // grind to the daemon level gate; surfaced in the live panel and the snapshot.
+    const rateSamples = [];           // [{t, xp, lvl}], oldest-first
+    const RATE_WINDOW_MS = 60000;     // 60s smoothing window
 
     while (true) {
         // --- pending button actions ---
@@ -308,14 +313,35 @@ export async function main(ns) {
 
         // --- build status snapshot text for the [snapshot] button (held in scope for click handler) ---
         const ts = new Date().toISOString().slice(0, 19).replace("T", " ");
-        const cash = ns.getPlayer().money;
+        const player = ns.getPlayer();
+        const cash = player.money;
         const lvl = ns.getHackingLevel();
+        // hacking XP lives on the player object (exp.hacking in current API, skills fallback). Sample it
+        // into the rolling window and derive smoothed rates from the oldest in-window sample.
+        const hackXp = (player.exp && player.exp.hacking) || (player.hacking_exp) || 0;
+        const nowMs = Date.now();
+        rateSamples.push({ t: nowMs, xp: hackXp, lvl: lvl });
+        while (rateSamples.length > 2 && nowMs - rateSamples[0].t > RATE_WINDOW_MS) rateSamples.shift();
+        let xpPerSec = 0, lvlPerSec = 0, rateSpanS = 0;
+        if (rateSamples.length >= 2) {
+            const first = rateSamples[0];
+            rateSpanS = (nowMs - first.t) / 1000;
+            if (rateSpanS > 0) {
+                xpPerSec = (hackXp - first.xp) / rateSpanS;
+                lvlPerSec = (lvl - first.lvl) / rateSpanS;
+            }
+        }
         const homePct = homeMax > 0 ? Math.round(homeUsed / homeMax * 100) : 0;
         const cloudPct = cloudMax > 0 ? Math.round(cloudUsed / cloudMax * 100) : 0;
         const netPct = netMax > 0 ? Math.round(netUsed / netMax * 100) : 0;
         const lines = [];
         lines.push("=== bb-status @ " + ts + " ===");
         lines.push("level " + lvl + "  cash $" + fmt(cash) + "  income $" + fmt(liveIncome) + "/s  share " + shareDisp + "  rooted " + rooted + "  contracts " + contracts);
+        // XP/level rate line (only once we have a window). Helps gauge the grind to a daemon level gate.
+        if (rateSamples.length >= 2 && rateSpanS >= 5) {
+            lines.push("xp/s " + fmt(xpPerSec) + "  lvl/s " + (lvlPerSec >= 0 ? lvlPerSec.toFixed(2) : "0") +
+                       "  (avg over " + Math.round(rateSpanS) + "s)");
+        }
         lines.push("");
         lines.push("RAM");
         lines.push("  home    " + fmtGB(homeUsed) + " / " + fmtGB(homeMax) + "   " + homePct + "%");
@@ -492,6 +518,9 @@ export async function main(ns) {
                 row("contracts", h("span", { style: { color: contracts > 0 ? incomeColor : muted } }, contracts)),
                 row("share", h("span", { style: { color: shareColor } }, shareDisp)),
                 row("income", h("span", { style: { color: incomeColor } }, "$" + fmt(liveIncome) + "/s")),
+                (rateSamples.length >= 2 && rateSpanS >= 5 && xpPerSec > 0)
+                    ? row("xp/s", h("span", { style: { color: hackColor } }, fmt(xpPerSec) + "  (" + lvlPerSec.toFixed(2) + " lvl/s)"))
+                    : null,
                 h("div", { style: { borderTop: "1px solid " + panelBorder, marginTop: 4, paddingTop: 4 } }),
                 h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 } },
                     h("span", null, "harvest"),
