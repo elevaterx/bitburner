@@ -20,13 +20,12 @@
  *  base costs in BN4 expect ~20-30 GB. Run `mem sing.js` to verify before deploy.
  *  Must be added to pull.js's file list to deploy via pull on other hosts.
  *
- *  BN8 (Ghost of Wall Street): when BN8_COLDSTART is on and we detect BN8, the
- *  hacking-economy phases are FORCED OFF. In BN8 scripted hacking earns $0 and the
- *  only income is the stock market, so program buys just burn stock capital and
- *  crime/faction-work earn ~nothing while FOCUS=true blocks you from the casino
- *  (the seed-capital bootstrap). Cold-start keeps only invite-accept and rooting
- *  (free, harmless) and optionally travels you to Aevum for the casino. Re-enable
- *  the earner phases for the Daedalus rep grind once stocks are funding you.
+ *  NODE-AWARE: on launch sing reads the current BitNode (getResetInfo) and its
+ *  multipliers (getBitNodeMultipliers, needs SF5) and picks a launch PROFILE that
+ *  turns the four hacking-economy phases on/off. DEFAULT = full autopilot. Nodes
+ *  with confirmed quirks get an explicit NODE_PROFILES entry (e.g. BN8 = stocks-only).
+ *  Un-profiled nodes where scripts can't earn (ScriptHackMoneyGain ~ 0) auto-fall
+ *  back to a quiet profile, so we never repeat the BN8 capital-drain blind.
  *
  *  @param {NS} ns */
 import { applyLayout } from "winlayout.js";
@@ -49,13 +48,27 @@ export async function main(ns) {
     const FOCUS        = true;        // true = 2x rep rate, blocks manual UI activity
     const LOOP_MS      = 5000;        // seconds between loop iterations
 
-    // === BN8 (Ghost of Wall Street) cold-start ===
-    // In BN8 the ONLY income is stocks; scripted hacking pays $0. Force the
-    // hacking-economy phases off so we don't burn stock capital on useless program
-    // buys or hold FOCUS (which blocks the casino seed bootstrap). Flip BN8_COLDSTART
-    // off (or gate per-phase) once stocks fund you and you want the Daedalus rep grind.
-    const BN8_COLDSTART    = true;    // auto-detect BN8 -> quiet cold-start profile
-    const BN8_TRAVEL_AEVUM = true;    // one-time travel to Aevum (casino city) in BN8 cold-start
+    // === node-aware launch profiles ===
+    // A profile flips the four hacking-economy phases on/off and can request a one-time
+    // travel. DEFAULT = full hacking-economy autopilot. Add a NODE_PROFILES entry for any
+    // node that needs different launch behavior; unlisted nodes fall back to DEFAULT, or
+    // to the ScriptHackMoneyGain guard below. The master ENABLE_* toggles still apply on
+    // top -- a phase runs only if BOTH ENABLE_* and the profile allow it, so ENABLE_*
+    // stays a global kill switch. Partial NODE_PROFILES entries inherit DEFAULT for any
+    // field they omit (they're merged over DEFAULT_PROFILE).
+    const DEFAULT_PROFILE = { label: "standard", programs: true, backdoors: true, crime: true, work: true, travelCity: null };
+    const NODE_PROFILES = {
+        // BN8 Ghost of Wall Street: only the stock market earns; scripted hacking pays
+        // $0 (ScriptHackMoneyGain = 0). Suppress every hacking-economy phase so we don't
+        // burn stock capital or hold FOCUS (which blocks the casino seed bootstrap), and
+        // travel to Aevum for the casino. Re-profile for the rep grind once stocks fund you.
+        8: { label: "Ghost of Wall Street (stocks-only)", programs: false, backdoors: false, crime: false, work: false, travelCity: "Aevum" },
+        // Add nodes as you reach them; confirm behavior live before trusting a hand-written
+        // profile. e.g. BN2 (gangs -- hacking still earns), BN3 (corp, all income -75%).
+    };
+    // Fallback for un-profiled nodes where scripts can't earn: suppress the money-spend
+    // and focus-grab phases (programs/crime/work) so we never blindly drain capital.
+    const HACK_DEAD_EPS = 0.01;
 
     // candidate crimes for the EV picker. v3 requires exact-match strings.
     // The picker evaluates chance × money / time and selects the best at current stats,
@@ -119,18 +132,42 @@ export async function main(ns) {
     ns.ui.openTail();
     await applyLayout(ns, "sing", ns.pid);   // self-position to the preferred stack layout
 
-    // BitNode can't change mid-session, so detect once up front.
-    let bn8Cold = false;
-    try { bn8Cold = BN8_COLDSTART && ns.getResetInfo().currentNode === 8; } catch (e) {}
-    let traveledAevum = false;
-    if (bn8Cold) ns.tprint("sing: BN8 cold-start active -- programs/backdoors/crime/faction-work suppressed; invites + rooting only.");
+    // --- resolve the node launch profile (once; BitNode can't change mid-session) ---
+    let node = 1, mults = null;
+    try { node = ns.getResetInfo().currentNode; } catch (e) {}
+    try { mults = ns.getBitNodeMultipliers(); } catch (e) {}   // needs SF5; null if unavailable
+    let profile, profileSource;
+    if (NODE_PROFILES[node]) {
+        profile = { ...DEFAULT_PROFILE, ...NODE_PROFILES[node] };   // partial entries inherit DEFAULT
+        profileSource = "explicit";
+    } else if (mults && typeof mults.ScriptHackMoneyGain === "number" && mults.ScriptHackMoneyGain < HACK_DEAD_EPS) {
+        profile = { ...DEFAULT_PROFILE, label: "auto: hacking earns $0", programs: false, crime: false, work: false };
+        profileSource = "auto (ScriptHackMoneyGain~0)";
+    } else {
+        profile = { ...DEFAULT_PROFILE };
+        profileSource = "default";
+    }
+    let traveled = (profile.travelCity == null);   // nothing to travel to => already done
+
+    ns.tprint("sing: BN" + node + " profile=" + profileSource + " [" + profile.label + "]  "
+        + "phases{prog:" + profile.programs + " bd:" + profile.backdoors
+        + " crime:" + profile.crime + " work:" + profile.work + "}"
+        + (profile.travelCity ? "  travel:" + profile.travelCity : ""));
+    if (mults) {
+        const m = (k) => (typeof mults[k] === "number" ? mults[k].toFixed(2) : "?");
+        ns.tprint("sing: mults  ScriptHackMoneyGain=" + m("ScriptHackMoneyGain")
+            + "  CrimeMoney=" + m("CrimeMoney") + "  HackExpGain=" + m("HackExpGain")
+            + "  ServerMaxMoney=" + m("ServerMaxMoney")
+            + "  HackLvlMult=" + m("HackingLevelMultiplier")
+            + "  DaemonDiff=" + m("WorldDaemonDifficulty"));
+    }
 
     while (true) {
         const lines = [];
         const log = (s) => lines.push(s);
         const cash = ns.getPlayer().money;
         const lvl  = ns.getHackingLevel();
-        log("=== sing  L" + lvl + "  $" + fmt(cash) + (bn8Cold ? "  [BN8 cold-start: quiet]" : "") + " ===");
+        log("=== sing  L" + lvl + "  $" + fmt(cash) + "  [BN" + node + ": " + profile.label + "] ===");
 
         // --- PHASE 1: invite accept ---
         if (ENABLE_INVITES) {
@@ -147,22 +184,22 @@ export async function main(ns) {
             } catch (e) { log("  [invite phase error] " + e); }
         }
 
-        // --- BN8: one-time travel to Aevum for the casino seed bootstrap ---
-        if (bn8Cold && BN8_TRAVEL_AEVUM && !traveledAevum) {
+        // --- one-time travel requested by the node profile (e.g. Aevum for BN8 casino) ---
+        if (profile.travelCity && !traveled) {
             try {
                 const acity = ns.getPlayer().city;
-                if (acity === "Aevum") {
-                    traveledAevum = true;
+                if (acity === profile.travelCity) {
+                    traveled = true;
                 } else if (cash > 200_000 + CASH_RESERVE) {
-                    if (ns.singularity.travelToCity("Aevum")) { log("  traveled to Aevum (casino city)"); traveledAevum = true; }
+                    if (ns.singularity.travelToCity(profile.travelCity)) { log("  traveled to " + profile.travelCity); traveled = true; }
                 } else {
-                    log("  Aevum travel: waiting on cash ($200k + reserve)");
+                    log("  travel to " + profile.travelCity + ": waiting on cash ($200k + reserve)");
                 }
             } catch (e) { log("  [travel error] " + e); }
         }
 
         // --- PHASE 2: TOR + port opener acquisition ---
-        if (ENABLE_PROGRAMS && !bn8Cold) {
+        if (ENABLE_PROGRAMS && profile.programs) {
             try {
                 // purchaseTor returns true if newly bought OR already owned. Either way
                 // we proceed to program purchases; if it failed (insufficient funds),
@@ -204,7 +241,7 @@ export async function main(ns) {
         }
         if (newlyRooted > 0) log("  rooted " + newlyRooted + " new server(s)");
 
-        if (ENABLE_BACKDOORS && !bn8Cold) {
+        if (ENABLE_BACKDOORS && profile.backdoors) {
             try {
                 const parent = bfsParents(ns);
                 for (const tgt of BACKDOOR_TARGETS) {
@@ -234,7 +271,7 @@ export async function main(ns) {
         // Crime in progress isn't restarted each loop (alreadyAt check). When cash crosses
         // back above CASH_FLOOR, next loop's workForFaction cancels any running crime and
         // starts work, costing the partial crime earnings -- acceptable for the simpler logic.
-        const doCrime = ENABLE_CRIME && cash < CASH_FLOOR && !bn8Cold;
+        const doCrime = ENABLE_CRIME && cash < CASH_FLOOR && profile.crime;
         if (doCrime) {
             try {
                 // pick the crime with the highest EV/sec at current stats
@@ -272,7 +309,7 @@ export async function main(ns) {
                     }
                 }
             } catch (e) { log("  [crime phase error] " + e); }
-        } else if (ENABLE_WORK && !bn8Cold) {
+        } else if (ENABLE_WORK && profile.work) {
             try {
                 const me = ns.getPlayer().factions;
                 const target = WORK_PRIORITY.find(f => me.includes(f));
