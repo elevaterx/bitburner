@@ -20,6 +20,14 @@
  *  base costs in BN4 expect ~20-30 GB. Run `mem sing.js` to verify before deploy.
  *  Must be added to pull.js's file list to deploy via pull on other hosts.
  *
+ *  BN8 (Ghost of Wall Street): when BN8_COLDSTART is on and we detect BN8, the
+ *  hacking-economy phases are FORCED OFF. In BN8 scripted hacking earns $0 and the
+ *  only income is the stock market, so program buys just burn stock capital and
+ *  crime/faction-work earn ~nothing while FOCUS=true blocks you from the casino
+ *  (the seed-capital bootstrap). Cold-start keeps only invite-accept and rooting
+ *  (free, harmless) and optionally travels you to Aevum for the casino. Re-enable
+ *  the earner phases for the Daedalus rep grind once stocks are funding you.
+ *
  *  @param {NS} ns */
 import { applyLayout } from "winlayout.js";
 export async function main(ns) {
@@ -40,6 +48,14 @@ export async function main(ns) {
                                        // and combat stats don't serve the hacker-faction path.
     const FOCUS        = true;        // true = 2x rep rate, blocks manual UI activity
     const LOOP_MS      = 5000;        // seconds between loop iterations
+
+    // === BN8 (Ghost of Wall Street) cold-start ===
+    // In BN8 the ONLY income is stocks; scripted hacking pays $0. Force the
+    // hacking-economy phases off so we don't burn stock capital on useless program
+    // buys or hold FOCUS (which blocks the casino seed bootstrap). Flip BN8_COLDSTART
+    // off (or gate per-phase) once stocks fund you and you want the Daedalus rep grind.
+    const BN8_COLDSTART    = true;    // auto-detect BN8 -> quiet cold-start profile
+    const BN8_TRAVEL_AEVUM = true;    // one-time travel to Aevum (casino city) in BN8 cold-start
 
     // candidate crimes for the EV picker. v3 requires exact-match strings.
     // The picker evaluates chance × money / time and selects the best at current stats,
@@ -103,12 +119,18 @@ export async function main(ns) {
     ns.ui.openTail();
     await applyLayout(ns, "sing", ns.pid);   // self-position to the preferred stack layout
 
+    // BitNode can't change mid-session, so detect once up front.
+    let bn8Cold = false;
+    try { bn8Cold = BN8_COLDSTART && ns.getResetInfo().currentNode === 8; } catch (e) {}
+    let traveledAevum = false;
+    if (bn8Cold) ns.tprint("sing: BN8 cold-start active -- programs/backdoors/crime/faction-work suppressed; invites + rooting only.");
+
     while (true) {
         const lines = [];
         const log = (s) => lines.push(s);
         const cash = ns.getPlayer().money;
         const lvl  = ns.getHackingLevel();
-        log("=== sing  L" + lvl + "  $" + fmt(cash) + " ===");
+        log("=== sing  L" + lvl + "  $" + fmt(cash) + (bn8Cold ? "  [BN8 cold-start: quiet]" : "") + " ===");
 
         // --- PHASE 1: invite accept ---
         if (ENABLE_INVITES) {
@@ -125,8 +147,22 @@ export async function main(ns) {
             } catch (e) { log("  [invite phase error] " + e); }
         }
 
+        // --- BN8: one-time travel to Aevum for the casino seed bootstrap ---
+        if (bn8Cold && BN8_TRAVEL_AEVUM && !traveledAevum) {
+            try {
+                const acity = ns.getPlayer().city;
+                if (acity === "Aevum") {
+                    traveledAevum = true;
+                } else if (cash > 200_000 + CASH_RESERVE) {
+                    if (ns.singularity.travelToCity("Aevum")) { log("  traveled to Aevum (casino city)"); traveledAevum = true; }
+                } else {
+                    log("  Aevum travel: waiting on cash ($200k + reserve)");
+                }
+            } catch (e) { log("  [travel error] " + e); }
+        }
+
         // --- PHASE 2: TOR + port opener acquisition ---
-        if (ENABLE_PROGRAMS) {
+        if (ENABLE_PROGRAMS && !bn8Cold) {
             try {
                 // purchaseTor returns true if newly bought OR already owned. Either way
                 // we proceed to program purchases; if it failed (insufficient funds),
@@ -168,7 +204,7 @@ export async function main(ns) {
         }
         if (newlyRooted > 0) log("  rooted " + newlyRooted + " new server(s)");
 
-        if (ENABLE_BACKDOORS) {
+        if (ENABLE_BACKDOORS && !bn8Cold) {
             try {
                 const parent = bfsParents(ns);
                 for (const tgt of BACKDOOR_TARGETS) {
@@ -198,7 +234,7 @@ export async function main(ns) {
         // Crime in progress isn't restarted each loop (alreadyAt check). When cash crosses
         // back above CASH_FLOOR, next loop's workForFaction cancels any running crime and
         // starts work, costing the partial crime earnings -- acceptable for the simpler logic.
-        const doCrime = ENABLE_CRIME && cash < CASH_FLOOR;
+        const doCrime = ENABLE_CRIME && cash < CASH_FLOOR && !bn8Cold;
         if (doCrime) {
             try {
                 // pick the crime with the highest EV/sec at current stats
@@ -236,7 +272,7 @@ export async function main(ns) {
                     }
                 }
             } catch (e) { log("  [crime phase error] " + e); }
-        } else if (ENABLE_WORK) {
+        } else if (ENABLE_WORK && !bn8Cold) {
             try {
                 const me = ns.getPlayer().factions;
                 const target = WORK_PRIORITY.find(f => me.includes(f));
