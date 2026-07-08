@@ -79,16 +79,36 @@ export async function main(ns) {
 // ---- navigation / save (new in Phase 2) ----
 
 // Ensure the Blackjack component is mounted; if not, click City -> casino -> Play blackjack.
+// Each step polls for its element (pages take a moment to render) instead of fixed sleeps.
 async function navToBlackjack(ns, doc, log) {
     if (findBlackjack(doc)) return true;
     log("nav: routing to blackjack...");
-    if (!clickByText(doc, "City", true))                 { log("nav: sidebar 'City' not found (World section expanded?)"); return false; }
-    await ns.sleep(600);
-    if (!clickByText(doc, ["casino", "Iker Molina Casino"], false)) { log("nav: casino location not found -- are you in Aevum?"); return false; }
-    await ns.sleep(600);
-    if (!clickByText(doc, "Play blackjack", false))      { log("nav: 'Play blackjack' button not found"); return false; }
-    await ns.sleep(600);
-    return !!findBlackjack(doc);
+    if (!(await waitClickText(ns, doc, "City", true, 3000)))                    { log("nav: sidebar 'City' not found (World section expanded?)"); return false; }
+    // The clickable location is a <span aria-label="Iker Molina Casino"> whose visible text is
+    // just the map letter -- so match by aria-label, not the "[casino]" label text.
+    if (!(await waitClickAria(ns, doc, "Iker Molina Casino", 4000)))            { log("nav: casino location not found -- are you in Aevum?"); return false; }
+    if (!(await waitClickText(ns, doc, "Play blackjack", false, 4000)))         { log("nav: 'Play blackjack' button not found"); return false; }
+    const end = Date.now() + 3000;                                             // wait for the component to mount
+    while (Date.now() < end) { if (findBlackjack(doc)) return true; await ns.sleep(200); }
+    return false;
+}
+
+// Poll up to `ms` for a text-matched clickable, clicking as soon as it appears.
+async function waitClickText(ns, doc, texts, exact, ms) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (clickByText(doc, texts, exact)) return true; await ns.sleep(200); }
+    return false;
+}
+
+// Poll up to `ms` for an element with the given aria-label, then click it.
+async function waitClickAria(ns, doc, label, ms) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+        const el = doc.querySelector('[aria-label="' + label + '"]');
+        if (el) { (el.closest("button, a, [role=button], span") || el).click(); return true; }
+        await ns.sleep(200);
+    }
+    return false;
 }
 
 // Click the first clickable element matching text. exact=true requires exact trimmed match.
