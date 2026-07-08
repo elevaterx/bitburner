@@ -14,7 +14,15 @@
  *    [1] purchaserFrac -- cloud purchaser spend fraction. default 0 = off.
  *    [2] coordPreset   -- coord scenario preset. default 'income'.
  *
- *  Must be added to pull.js. @param {NS} ns */
+ *  Must be added to pull.js.
+ *
+ *  NODE-AWARE: in nodes where scripted hacking earns ~nothing (BN8 Ghost of Wall
+ *  Street), the coordinator/farm produce $0 while consuming the whole pool, so boot
+ *  brings up only sing (quiet) + hud1 and SKIPS purchaser + coordinator. Income there
+ *  is the stock market -- run the trader. Pass arg[3]='farm' to force the farm anyway
+ *  (e.g. as an XP tap toward the daemon gate).
+ *
+ *  @param {NS} ns */
 export async function main(ns) {
     ns.disableLog("ALL");
 
@@ -40,9 +48,17 @@ export async function main(ns) {
     const COORD_PRESET   = ns.args[2] !== undefined ? String(ns.args[2]) : "income"; // coord scenario preset
     const PURCHASER_RES  = 500_000;   // purchaser cash floor (only used if purchaser enabled)
     const SETTLE_MS      = 600;       // pause between ordered launches so each claims RAM before the next
+    const FORCE_FARM     = ns.args[3] === "farm";   // override: run the farm even in a stocks-only node
+
+    // Node-aware: in a stocks-only / dead-hack node (BN8), the farm earns $0 and just
+    // eats the pool, so we skip purchaser + coordinator and boot only sing + hud1.
+    const hackDead = hackIncomeDead(ns);
+    const farmMode = !hackDead || FORCE_FARM;   // true = normal farm boot; false = BN8 quiet boot
 
     const log = (m) => ns.tprint("[boot] " + m);
     log("cold-start bootstrap beginning...");
+    if (!farmMode) log("NODE is stocks-only (scripted hacking earns $0) -- quiet boot: sing + hud1 only, "
+        + "farm + purchaser SKIPPED. Income is the stock market. (arg[3]='farm' forces the farm.)");
 
     // ---- 0. clean slate: kill managed scripts if already running (idempotent). NEVER kills hud1
     //         (the button runs FROM it) or hud2 (on-demand). Sweeps sh.js workers fleet-wide. ----
@@ -62,10 +78,12 @@ export async function main(ns) {
 
     // ---- 2. purchaser: cloud rebuild -- OFF by default (spends cash, cloud doesn't persist install).
     //         Enable only with an explicit purchaserFrac arg. ----
-    if (PURCHASER_FRAC > 0) {
+    if (PURCHASER_FRAC > 0 && farmMode) {
         pid = ns.run("purchaser.js", 1, PURCHASER_FRAC, PURCHASER_RES);
         log(pid ? ("purchaser.js up (" + PURCHASER_FRAC + " frac, $" + (PURCHASER_RES / 1e3) + "k reserve)") : "purchaser.js FAILED");
         await ns.sleep(SETTLE_MS);
+    } else if (!farmMode) {
+        log("purchaser SKIPPED (stocks-only node -- cloud servers earn $0; hold capital for stocks)");
     } else {
         log("purchaser SKIPPED (off by default; pass arg[1]>0 to enable cloud buying)");
     }
@@ -79,10 +97,17 @@ export async function main(ns) {
         await ns.sleep(SETTLE_MS);   // let sharecap deploy its workers before coord scans the pool
     }
 
-    // ---- 4. coordinator: farm brain. Takes whatever pool remains after sharecap. ----
-    pid = ns.run("coordinator.js", 1, COORD_PRESET);
-    log(pid ? ("coordinator.js up (preset '" + COORD_PRESET + "') -- takes remaining pool") : "coordinator.js FAILED");
-    await ns.sleep(SETTLE_MS);
+    // ---- 4. coordinator: farm brain. Takes whatever pool remains after sharecap.
+    //         SKIPPED in a stocks-only node -- the farm earns $0 there and would just
+    //         eat the pool. Income in those nodes is the stock market (run the trader). ----
+    if (farmMode) {
+        pid = ns.run("coordinator.js", 1, COORD_PRESET);
+        log(pid ? ("coordinator.js up (preset '" + COORD_PRESET + "') -- takes remaining pool") : "coordinator.js FAILED");
+        await ns.sleep(SETTLE_MS);
+    } else {
+        log("coordinator SKIPPED (stocks-only node: farm earns $0). Income is the stock market -- run the trader. "
+            + "arg[3]='farm' forces the farm (e.g. as an XP tap).");
+    }
 
     // ---- 5. ensure hud1 is running (launch only if absent; never kill it -- may be our caller) ----
     let hud1Running = false;
@@ -94,9 +119,11 @@ export async function main(ns) {
         log(pid ? "hud1.js up" : "hud1.js FAILED");
     }
 
-    log("bootstrap complete. " + (SHARE_CAP <= 0 ? "(no share) " : "share cap " + SHARE_CAP + "t ") +
-        (PURCHASER_FRAC > 0 ? "+ purchaser " + PURCHASER_FRAC + " " : "+ no purchaser ") +
-        "-- watch coord log for harvest growth. Launch hud2 manually for faction/aug state.");
+    log("bootstrap complete. " + (farmMode ? "" : "[STOCKS-ONLY node: farm off] ") +
+        (SHARE_CAP <= 0 ? "(no share) " : "share cap " + SHARE_CAP + "t ") +
+        (PURCHASER_FRAC > 0 && farmMode ? "+ purchaser " + PURCHASER_FRAC + " " : "+ no purchaser ") +
+        (farmMode ? "-- watch coord log for harvest growth. " : "-- run the trader for income. ") +
+        "Launch hud2 manually for faction/aug state.");
 }
 
 // BFS the network from home, returning all reachable hosts (incl. home).
@@ -107,4 +134,17 @@ function bfs(ns) {
         for (const n of ns.scan(c)) if (!seen.has(n)) { seen.add(n); q.push(n); out.push(n); }
     }
     return out;
+}
+
+// True in nodes where scripted hacking earns ~nothing (BN8 Ghost of Wall Street, or
+// any node with ScriptHackMoneyGain ~ 0), so the farm produces no income. Explicit
+// BN8 check first (cheap); the multiplier heuristic catches other dead-hack nodes.
+// getBitNodeMultipliers needs SF5 -- try/catch defaults to "not dead" if unavailable.
+function hackIncomeDead(ns) {
+    try {
+        if (ns.getResetInfo().currentNode === 8) return true;   // stocks-only node
+        const m = ns.getBitNodeMultipliers();
+        if (m && typeof m.ScriptHackMoneyGain === "number" && m.ScriptHackMoneyGain < 0.01) return true;
+    } catch (e) {}
+    return false;
 }
