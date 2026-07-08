@@ -10,7 +10,7 @@
  *  usage:  run update-pull.js
  *  @param {NS} ns */
 export async function main(ns) {
-  const USER = "Avruch0101";
+  const USER = "elevaterx";
   const REPO = "bitburner";
   const BRANCH = "main";
   const url = "https://raw.githubusercontent.com/" + USER + "/" + REPO + "/" + BRANCH + "/pull.js?ts=" + Date.now();

@@ -16,7 +16,7 @@
  *  @param {NS} ns */
 export async function main(ns) {
   // ---- edit these three once, to match your repo ----
-  const USER = "Avruch0101";
+  const USER = "elevaterx";
   const REPO = "bitburner";
   const BRANCH = "main";
   const NOKILL = ns.args[0] === "nokill";
@@ -37,7 +37,7 @@ export async function main(ns) {
     "batch-math.js", "batch-live.js", "sharecap.js",
     "bhack.js", "bgrow.js", "bweaken.js",
     "bprep.js", "bdiag.js", "bbatch.js",
-    "killfarm.js", "bbatch2.js", "xpw.js", "update-pull.js"
+    "killfarm.js", "bbatch2.js", "xpw.js", "trader.js", "update-pull.js"
   ];
   const base = "https://raw.githubusercontent.com/" + USER + "/" + REPO + "/" + BRANCH + "/";
 
