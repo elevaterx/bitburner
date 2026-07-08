@@ -5,14 +5,14 @@
  *  trades continuously -- long+short on 4S forecasts once affordable, long-only on
  *  an estimated (EMA) forecast before that.
  *
- *  PREREQUISITE -- SEED CAPITAL: scripted trading needs TIX API access ($5b), which
- *  you cannot hack for in BN8. Bootstrap it at the CASINO (Aevum, Iker Molina -- sing
- *  already travels you there): win to ~$6b and this script auto-buys TIX API and
- *  starts trading (EMA, long-only). It compounds toward ~$26b, then auto-buys the 4S
- *  TIX API and switches to accurate long+short trading. Note: WSE account ($200m) is
- *  UI-only and NOT needed for scripts, so this never buys it.
+ *  BN8 grants WSE + TIX API access AND $250m at the start, so this trades IMMEDIATELY
+ *  from the starting seed -- no casino, no manual bootstrap. It runs EMA / long-only
+ *  until it can afford the 4S Market Data TIX API ($25b), then switches to accurate
+ *  long+short trading. (The TIX-API self-purchase below is a fallback for OTHER nodes
+ *  where -- via SF8 -- you may need to buy access; in BN8 you already have it.)
  *
- *  It runs fine sitting idle before you have the seed -- it just reports "waiting".
+ *  Optional accelerant: the casino (Aevum) can fast-forward the slow early EMA phase
+ *  straight to the 4S tier, but it is NOT required -- the $250m seed is enough to start.
  *
  *  usage:  run trader.js [reserveFrac] [deployFrac]
  *          reserveFrac  fraction of net worth kept liquid (default 0.10)
@@ -139,8 +139,8 @@ function worth(ns, symbols) {
     let w = ns.getPlayer().money;
     for (const s of symbols) {
         const pos = ns.stock.getPosition(s);
-        if (pos[0] > 0) w += ns.stock.getSaleGain(s, pos[0], "Long");
-        if (pos[2] > 0) w += ns.stock.getSaleGain(s, pos[2], "Short");
+        if (pos[0] > 0) w += ns.stock.getSaleGain(s, pos[0], "L");
+        if (pos[2] > 0) w += ns.stock.getSaleGain(s, pos[2], "S");
     }
     return w;
 }

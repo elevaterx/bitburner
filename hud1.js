@@ -340,8 +340,8 @@ export async function main(ns) {
                 for (const s of ns.stock.getSymbols()) {
                     const pos = ns.stock.getPosition(s);
                     let val = 0;
-                    if (pos[0] > 0) { const g = ns.stock.getSaleGain(s, pos[0], "Long");  market += g; val += g; longs++; }
-                    if (pos[2] > 0) { const g = ns.stock.getSaleGain(s, pos[2], "Short"); market += g; val += g; shorts++; }
+                    if (pos[0] > 0) { const g = ns.stock.getSaleGain(s, pos[0], "L");  market += g; val += g; longs++; }
+                    if (pos[2] > 0) { const g = ns.stock.getSaleGain(s, pos[2], "S"); market += g; val += g; shorts++; }
                     if (val > 0 && (!top || val > top.val)) top = { s, val };
                 }
                 let has4S = false; try { has4S = ns.stock.has4SDataTixApi(); } catch (e) {}
