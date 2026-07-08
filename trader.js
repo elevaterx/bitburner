@@ -30,11 +30,12 @@ export async function main(ns) {
     const RESERVE_FRAC = Number(ns.args[0]) || 0.10;   // keep this frac of net worth liquid
     const DEPLOY_FRAC  = Number(ns.args[1]) || 0.25;   // commit this frac of spare cash per tick
 
-    const BUY_LONG   = 0.60;    // forecast >= this -> go long
-    const GO_SHORT   = 0.40;    // forecast <= this -> short (4S mode only)
-    const EXIT_LONG  = 0.50;    // long: sell when forecast drops below this
-    const EXIT_SHORT = 0.50;    // short: cover when forecast rises above this
+    const BUY_LONG   = 0.62;    // forecast >= this -> go long (raised: fewer, stronger signals)
+    const GO_SHORT   = 0.38;    // forecast <= this -> short (4S mode only)
+    const EXIT_LONG  = 0.47;    // long: sell only when clearly bearish (wide hold band cuts churn)
+    const EXIT_SHORT = 0.53;    // short: cover only when clearly bullish
     const MAX_VOL    = 0.05;    // 4S mode: skip stocks more volatile than this
+    const MAX_POS_FRAC = 0.20;  // cap any single position at this frac of net worth (diversify, cut variance)
     const EMA_WARMUP = 35;      // EMA mode: price ticks observed before trading a symbol
     const EMA_ALPHA  = 0.10;    // EMA smoothing for the estimated forecast
     const COMMISSION = 100_000; // per-transaction fee; don't open positions too small to clear it
@@ -111,6 +112,7 @@ export async function main(ns) {
         }
         cands.sort((a, b) => b.conv - a.conv);
 
+        const posCap = netWorth * MAX_POS_FRAC;
         for (const c of cands) {
             if (budget < COMMISSION * 2) break;
             const pos = ns.stock.getPosition(c.s);
@@ -118,9 +120,14 @@ export async function main(ns) {
             const price = c.dir === "long" ? ns.stock.getAskPrice(c.s) : ns.stock.getBidPrice(c.s);
             const room  = ns.stock.getMaxShares(c.s) - owned;
             if (room <= 0 || price <= 0) continue;
-            let shares = Math.min(room, Math.floor((budget - COMMISSION) / price));
+            // per-stock diversification cap: keep any single position <= posCap of net worth
+            const heldVal = owned > 0 ? ns.stock.getSaleGain(c.s, owned, c.dir === "long" ? "L" : "S") : 0;
+            const headroom = posCap - heldVal;
+            if (headroom < COMMISSION * 10) continue;            // already at cap for this stock
+            const spend = Math.min(budget, headroom);
+            let shares = Math.min(room, Math.floor((spend - COMMISSION) / price));
             if (shares <= 0) continue;
-            if (shares * price < COMMISSION * 10) continue;   // too small to be worth the fee
+            if (shares * price < COMMISSION * 10) continue;      // too small to be worth the fee
             if (c.dir === "long") ns.stock.buyStock(c.s, shares);
             else ns.stock.buyShort(c.s, shares);
             budget -= shares * price + COMMISSION;
