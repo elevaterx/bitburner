@@ -553,7 +553,7 @@ export async function main(ns) {
                 row("contracts", h("span", { style: { color: contracts > 0 ? incomeColor : muted } }, contracts)),
                 row("share", h("span", { style: { color: shareColor } }, shareDisp)),
                 row("income", h("span", { style: { color: incomeColor } }, "$" + fmt(liveIncome) + "/s")),
-                (rateSamples.length >= 2 && rateSpanS >= 5 && xpPerSec > 0)
+                (rateSamples.length >= 2 && rateSpanS >= 5)
                     ? row("xp/s", h("span", { style: { color: hackColor } }, fmt(xpPerSec) + "  (" + lvlPerSec.toFixed(2) + " lvl/s)"))
                     : null,
                 h("div", { style: { borderTop: "1px solid " + panelBorder, marginTop: 4, paddingTop: 4 } }),
