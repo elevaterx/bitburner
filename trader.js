@@ -36,15 +36,15 @@ export async function main(ns) {
     const EXIT_SHORT = 0.53;    // short: cover only when clearly bullish
     const MAX_VOL    = 0.05;    // 4S mode: skip stocks more volatile than this
     const MAX_POS_FRAC = 0.20;  // cap any single position at this frac of net worth (diversify, cut variance)
-    const EMA_WARMUP = 35;      // EMA mode: price ticks observed before trading a symbol
-    const EMA_ALPHA  = 0.10;    // EMA smoothing for the estimated forecast
+    const HIST_LEN   = 45;      // no-4S: window of recent up/down ticks used to estimate each forecast
     const COMMISSION = 100_000; // per-transaction fee; don't open positions too small to clear it
     const TIX_COST   = 5e9;     // TIX API access
     const S4_COST    = 25e9;    // 4S Market Data TIX API access
     const BUY_BUFFER = 1.15;    // only buy access when we hold 15% more than its cost
 
-    // EMA forecast state for the pre-4S phase
-    const ema = {}, seen = {}, lastPx = {};
+    // pre-4S forecast estimation: a ring buffer of recent up/down ticks per stock.
+    // forecast estimate = fraction of up-ticks over the window = a stable estimate of P(up).
+    const hist = {}, lastPx = {};   // hist[sym] = [0/1,...] most-recent appended
 
     while (true) {
         // ---- provisioning: buy market access as cash allows ----
@@ -72,21 +72,26 @@ export async function main(ns) {
 
         const symbols = ns.stock.getSymbols();
 
-        // ---- update EMA forecasts (only used before 4S) ----
+        // ---- update forecast estimates (only used before 4S) ----
         if (!use4S) {
             for (const s of symbols) {
                 const p = ns.stock.getPrice(s);
-                if (lastPx[s] !== undefined) {
-                    const up = p > lastPx[s] ? 1 : 0;
-                    ema[s] = (ema[s] === undefined ? 0.5 : ema[s]) * (1 - EMA_ALPHA) + up * EMA_ALPHA;
-                    seen[s] = (seen[s] || 0) + 1;
+                if (lastPx[s] !== undefined && p !== lastPx[s]) {   // only count real moves, not flat ticks
+                    (hist[s] || (hist[s] = [])).push(p > lastPx[s] ? 1 : 0);
+                    if (hist[s].length > HIST_LEN) hist[s].shift();
                 }
                 lastPx[s] = p;
             }
         }
 
-        const forecastOf = (s) => use4S ? ns.stock.getForecast(s) : (ema[s] !== undefined ? ema[s] : 0.5);
-        const ready = (s) => use4S || (seen[s] || 0) >= EMA_WARMUP;
+        const forecastOf = (s) => {
+            if (use4S) return ns.stock.getForecast(s);
+            const h = hist[s];
+            if (!h || h.length === 0) return 0.5;
+            let up = 0; for (const v of h) up += v;
+            return up / h.length;
+        };
+        const ready = (s) => use4S || (hist[s] && hist[s].length >= HIST_LEN);   // full window = stable estimate
 
         // ---- manage existing positions: exit on forecast reversal ----
         for (const s of symbols) {
