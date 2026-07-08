@@ -572,6 +572,17 @@ export async function main(ns) {
                     h("span", null, "dep " + deployed + "  batch " + totalBatch + "  idle " + idle + "  tot " + total)
                 ),
             ),
+            stock ? panel("STOCKS",
+                row("trader", h("span", { style: { color: !!(scriptTally && scriptTally["trader.js"]) ? incomeColor : warnColor } },
+                    !!(scriptTally && scriptTally["trader.js"]) ? "running" : "NOT RUNNING")),
+                row("mode", stock.has4S ? "4S long+short" : "EMA long-only"),
+                row("net worth", h("span", { style: { color: incomeColor } }, "$" + fmt(stock.net))),
+                row("cash / mkt", "$" + fmt(cash) + " / $" + fmt(stock.market)),
+                row("positions", stock.longs + "L / " + stock.shorts + "S"),
+                (nwSamples.length >= 2 && nwSpanS >= 5)
+                    ? row("net worth/s", h("span", { style: { color: nwPerSec >= 0 ? incomeColor : warnColor } }, "$" + fmt(nwPerSec) + "/s"))
+                    : null,
+            ) : null,
             panel("CONTROLLERS",
                 ...(ctrlRows.length === 0 ? [h("div", { style: { color: muted, fontSize: 11 } }, "(none)")] : ctrlRows)
             ),
