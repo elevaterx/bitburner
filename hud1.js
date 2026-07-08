@@ -27,6 +27,7 @@ export async function main(ns) {
     // grind to the daemon level gate; surfaced in the live panel and the snapshot.
     const rateSamples = [];           // [{t, xp, lvl}], oldest-first
     const RATE_WINDOW_MS = 60000;     // 60s smoothing window
+    const nwSamples = [];             // [{t, nw}] net-worth samples -> smoothed stock income rate
 
     while (true) {
         // --- pending button actions ---
@@ -331,6 +332,31 @@ export async function main(ns) {
                 lvlPerSec = (lvl - first.lvl) / rateSpanS;
             }
         }
+        // --- stock / trader state (BN8 income). Guarded: needs TIX API (BN8 grants it, or via SF8). ---
+        let stock = null;
+        try {
+            if (ns.stock.hasTixApiAccess()) {
+                let market = 0, longs = 0, shorts = 0, top = null;
+                for (const s of ns.stock.getSymbols()) {
+                    const pos = ns.stock.getPosition(s);
+                    let val = 0;
+                    if (pos[0] > 0) { const g = ns.stock.getSaleGain(s, pos[0], "Long");  market += g; val += g; longs++; }
+                    if (pos[2] > 0) { const g = ns.stock.getSaleGain(s, pos[2], "Short"); market += g; val += g; shorts++; }
+                    if (val > 0 && (!top || val > top.val)) top = { s, val };
+                }
+                let has4S = false; try { has4S = ns.stock.has4SDataTixApi(); } catch (e) {}
+                stock = { net: cash + market, market, longs, shorts, top, has4S };
+            }
+        } catch (e) { stock = null; }
+        // net-worth rate sampling (mirrors the xp/s sampler above)
+        const nowNet = stock ? stock.net : cash;
+        nwSamples.push({ t: nowMs, nw: nowNet });
+        while (nwSamples.length > 2 && nowMs - nwSamples[0].t > RATE_WINDOW_MS) nwSamples.shift();
+        let nwPerSec = 0, nwSpanS = 0;
+        if (nwSamples.length >= 2) {
+            nwSpanS = (nowMs - nwSamples[0].t) / 1000;
+            if (nwSpanS > 0) nwPerSec = (nowNet - nwSamples[0].nw) / nwSpanS;
+        }
         const homePct = homeMax > 0 ? Math.round(homeUsed / homeMax * 100) : 0;
         const cloudPct = cloudMax > 0 ? Math.round(cloudUsed / cloudMax * 100) : 0;
         const netPct = netMax > 0 ? Math.round(netUsed / netMax * 100) : 0;
@@ -343,6 +369,15 @@ export async function main(ns) {
                        "  (avg over " + Math.round(rateSpanS) + "s)");
         }
         lines.push("");
+        if (stock) {
+            const traderRunning = !!(scriptTally && scriptTally["trader.js"]);
+            lines.push("STOCKS");
+            lines.push("  trader     " + (traderRunning ? "running" : "NOT RUNNING") + "   mode " + (stock.has4S ? "4S long+short" : "EMA long-only"));
+            lines.push("  net worth  $" + fmt(stock.net) + "   (cash $" + fmt(cash) + " + market $" + fmt(stock.market) + ")");
+            lines.push("  positions  " + stock.longs + "L / " + stock.shorts + "S" + (stock.top ? "   top " + stock.top.s + " $" + fmt(stock.top.val) : ""));
+            if (nwSamples.length >= 2 && nwSpanS >= 5) lines.push("  net worth/s $" + fmt(nwPerSec) + "  (avg over " + Math.round(nwSpanS) + "s)");
+            lines.push("");
+        }
         lines.push("RAM");
         lines.push("  home    " + fmtGB(homeUsed) + " / " + fmtGB(homeMax) + "   " + homePct + "%");
         lines.push("  cloud   " + fmtGB(cloudUsed) + " / " + fmtGB(cloudMax) + "   " + cloudPct + "% (" + cloudCount + " srv)");
