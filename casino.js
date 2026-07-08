@@ -84,7 +84,7 @@ async function navToBlackjack(ns, doc, log) {
     log("nav: routing to blackjack...");
     if (!clickByText(doc, "City", true))                 { log("nav: sidebar 'City' not found (World section expanded?)"); return false; }
     await ns.sleep(600);
-    if (!clickByText(doc, "Iker Molina Casino", false))  { log("nav: casino location not found -- are you in Aevum?"); return false; }
+    if (!clickByText(doc, ["casino", "Iker Molina Casino"], false)) { log("nav: casino location not found -- are you in Aevum?"); return false; }
     await ns.sleep(600);
     if (!clickByText(doc, "Play blackjack", false))      { log("nav: 'Play blackjack' button not found"); return false; }
     await ns.sleep(600);
@@ -92,13 +92,19 @@ async function navToBlackjack(ns, doc, log) {
 }
 
 // Click the first clickable element matching text. exact=true requires exact trimmed match.
-function clickByText(doc, text, exact) {
+// texts may be a single string or a list of candidates (first match wins). Case-insensitive.
+function clickByText(doc, texts, exact) {
+    const cands = (Array.isArray(texts) ? texts : [texts]).map((s) => s.toLowerCase());
     for (const el of doc.querySelectorAll("button, a, [role=button], span, li, p, div")) {
         const t = (el.textContent || "").trim();
-        if (exact ? t === text : t.includes(text)) {
-            const target = el.closest("button, a, [role=button]") || el;
-            target.click();
-            return true;
+        const tl = t.toLowerCase();
+        for (const cl of cands) {
+            const hit = exact ? tl === cl : (tl.includes(cl) && t.length <= cl.length + 25);  // length guard skips wrapper divs
+            if (hit) {
+                const target = el.closest("button, a, [role=button]") || el;
+                target.click();
+                return true;
+            }
         }
     }
     return false;
