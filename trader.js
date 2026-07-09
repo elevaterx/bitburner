@@ -41,6 +41,10 @@ export async function main(ns) {
     const TIX_COST   = 5e9;     // TIX API access
     const S4_COST    = 25e9;    // 4S Market Data TIX API access
     const BUY_BUFFER = 1.15;    // only buy access when we hold 15% more than its cost
+    // Once NET WORTH clears this, stop deploying and liquidate into cash so we can actually
+    // afford 4S. Without this the trader keeps ~90% of net worth in positions and its cash
+    // never reaches S4_COST -- it would never buy 4S no matter how rich it got.
+    const S4_SAVE_AT = S4_COST * 1.30;   // net worth at which we start saving for the 4S purchase
 
     // pre-4S forecast estimation: a ring buffer of recent up/down ticks per stock.
     // forecast estimate = fraction of up-ticks over the window = a stable estimate of P(up).
@@ -61,16 +65,32 @@ export async function main(ns) {
             }
         }
 
+        const symbols = ns.stock.getSymbols();
+
+        // ---- 4S purchase: gate on NET WORTH, then liquidate into cash to afford it ----
         let use4S = false;
         try { use4S = ns.stock.has4SDataTixApi(); } catch (e) {}
+        let savingFor4S = false;
         if (!use4S) {
-            const money = ns.getPlayer().money;
-            if (money >= S4_COST * BUY_BUFFER) {
-                try { if (ns.stock.purchase4SMarketDataTixApi()) { ns.tprint("trader: bought 4S TIX API -- accurate long+short trading online."); use4S = true; } } catch (e) {}
+            const nw = worth(ns, symbols);
+            const cashNow = ns.getPlayer().money;
+            if (cashNow >= S4_COST * BUY_BUFFER) {
+                try {
+                    if (ns.stock.purchase4SMarketDataTixApi()) { ns.tprint("trader: bought 4S TIX API -- accurate long+short trading online."); use4S = true; }
+                } catch (e) {}
+            } else if (nw >= S4_SAVE_AT) {
+                // Rich enough overall, but too much is tied up in positions. Sell down to raise cash.
+                savingFor4S = true;
+                for (const s of symbols) {
+                    const pos = ns.stock.getPosition(s);
+                    if (pos[0] > 0) ns.stock.sellStock(s, pos[0]);
+                    if (pos[2] > 0) ns.stock.sellShort(s, pos[2]);
+                }
+                report(ns, "trader: SAVING FOR 4S -- liquidating. net $" + fmt(nw) + "  cash $" + fmt(ns.getPlayer().money) + " / need $" + fmt(S4_COST * BUY_BUFFER));
+                if (typeof ns.stock.nextUpdate === "function") await ns.stock.nextUpdate(); else await ns.sleep(6000);
+                continue;   // don't re-deploy this tick
             }
         }
-
-        const symbols = ns.stock.getSymbols();
 
         // ---- update forecast estimates (only used before 4S) ----
         if (!use4S) {
