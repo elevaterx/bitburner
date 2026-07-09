@@ -27,14 +27,19 @@ export async function main(ns) {
     ns.disableLog("ALL");
     ns.ui.openTail();
 
-    const RESERVE_FRAC = Number(ns.args[0]) || 0.10;   // keep this frac of net worth liquid
-    const DEPLOY_FRAC  = Number(ns.args[1]) || 0.25;   // commit this frac of spare cash per tick
+    const RESERVE_FRAC = Number(ns.args[0]) || 0.05;   // keep this frac of net worth liquid
+    const DEPLOY_FRAC  = Number(ns.args[1]) || 0.90;   // commit this frac of spare cash per tick
+    const SELL_ALL     = ns.args.includes("sellall");  // liquidate everything and exit (do this before installing augs!)
 
-    const BUY_LONG   = 0.62;    // forecast >= this -> go long (raised: fewer, stronger signals)
-    const GO_SHORT   = 0.38;    // forecast <= this -> short (4S mode only)
-    const EXIT_LONG  = 0.47;    // long: sell only when clearly bearish (wide hold band cuts churn)
-    const EXIT_SHORT = 0.53;    // short: cover only when clearly bullish
-    const MAX_VOL    = 0.05;    // 4S mode: skip stocks more volatile than this
+    // With an ACCURATE forecast (4S), expected log-growth per tick = (2f-1) * ln(1+av),
+    // where av is proportional to volatility. So any f != 0.5 is +EV, and volatility is the
+    // MULTIPLIER on that edge -- not risk to be filtered out. Hence: loose entry thresholds,
+    // exit at the true break-even (0.50), and rank candidates by (2f-1)*vol, not |f-0.5|.
+    const BUY_LONG   = 0.55;    // forecast >= this -> go long
+    const GO_SHORT   = 0.45;    // forecast <= this -> short (4S mode only)
+    const EXIT_LONG  = 0.50;    // long: exit at break-even forecast
+    const EXIT_SHORT = 0.50;    // short: cover at break-even forecast
+    const EMA_MIN_CONV = 0.12;  // EMA mode only: stricter entry (|f-0.5|) since the estimate is noisy
     const MAX_POS_FRAC = 0.20;  // cap any single position at this frac of net worth (diversify, cut variance)
     const HIST_LEN   = 45;      // no-4S: window of recent up/down ticks used to estimate each forecast
     const COMMISSION = 100_000; // per-transaction fee; don't open positions too small to clear it
@@ -49,6 +54,19 @@ export async function main(ns) {
     // pre-4S forecast estimation: a ring buffer of recent up/down ticks per stock.
     // forecast estimate = fraction of up-ticks over the window = a stable estimate of P(up).
     const hist = {}, lastPx = {};   // hist[sym] = [0/1,...] most-recent appended
+
+    if (SELL_ALL) {
+        const syms = ns.stock.getSymbols();
+        let sold = 0;
+        for (const s of syms) {
+            const pos = ns.stock.getPosition(s);
+            if (pos[0] > 0) { ns.stock.sellStock(s, pos[0]); sold++; }
+            if (pos[2] > 0) { ns.stock.sellShort(s, pos[2]); sold++; }
+        }
+        ns.tprint("trader: SELLALL -- liquidated " + sold + " positions. cash $" + fmt(ns.getPlayer().money)
+            + ". Safe to install augmentations now (an install wipes the stock market).");
+        return;
+    }
 
     while (true) {
         // ---- provisioning: buy market access as cash allows ----
@@ -131,9 +149,17 @@ export async function main(ns) {
         for (const s of symbols) {
             if (!ready(s)) continue;
             const f = forecastOf(s);
-            if (use4S && ns.stock.getVolatility(s) > MAX_VOL) continue;   // vol filter only in 4S mode
-            if (f >= BUY_LONG) cands.push({ s, dir: "long", conv: f - 0.5 });
-            else if (use4S && f <= GO_SHORT) cands.push({ s, dir: "short", conv: 0.5 - f });  // shorts: 4S only
+            if (use4S) {
+                // EV rank = |2f-1| * volatility  (proportional to expected log-growth per tick).
+                // NOTE: no volatility ceiling -- with a true forecast, high vol AMPLIFIES the edge.
+                const vol = ns.stock.getVolatility(s);
+                if (f >= BUY_LONG)      cands.push({ s, dir: "long",  conv: (2 * f - 1) * vol });
+                else if (f <= GO_SHORT) cands.push({ s, dir: "short", conv: (1 - 2 * f) * vol });
+            } else {
+                // EMA mode: no getVolatility (needs 4S) and the forecast is a noisy estimate,
+                // so demand real conviction and stay long-only.
+                if (f - 0.5 >= EMA_MIN_CONV) cands.push({ s, dir: "long", conv: f - 0.5 });
+            }
         }
         cands.sort((a, b) => b.conv - a.conv);
 
