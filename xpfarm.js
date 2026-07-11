@@ -21,7 +21,9 @@ export async function main(ns) {
         const out = [], seen = new Set(["home"]), q = ["home"];
         while (q.length) {
             const cur = q.shift(); out.push(cur);
-            for (const n of ns.scan(cur)) if (!seen.has(n)) { seen.add(n); q.push(n); }
+            // skip hacknet servers: getServerMaxMoney/getGrowTime/etc THROW on them, and we never
+            // want XP workers there anyway (running scripts on a hacknet server cuts its hash rate).
+            for (const n of ns.scan(cur)) if (!seen.has(n) && !n.startsWith("hacknet-")) { seen.add(n); q.push(n); }
         }
         return out;
     };
@@ -42,10 +44,10 @@ export async function main(ns) {
     // --- initial scan/root, then pick the XP target ---
     let all = scan();
     root(all);
-    const L0 = ns.getHackingLevel();
     const ranked = all
-        .filter(h => ns.hasRootAccess(h) && ns.getServerMaxMoney(h) > 0
-                  && ns.getServerRequiredHackingLevel(h) <= L0)
+        // xp.js only weakens/grows -- those need root but NOT a hacking-level match, so no
+        // requiredHackingLevel filter. Any rooted, money-bearing server is a valid XP target.
+        .filter(h => ns.hasRootAccess(h) && ns.getServerMaxMoney(h) > 0)
         // proxy for XP/sec per thread: exp per action (~3 + 0.3*minSec) over grow time
         .map(h => ({ h, score: (3 + 0.3 * ns.getServerMinSecurityLevel(h)) / Math.max(1, ns.getGrowTime(h)) }))
         .sort((a, b) => b.score - a.score);
@@ -61,6 +63,8 @@ export async function main(ns) {
     }
 
     const workerRam = ns.getScriptRam(WORKER, "home");
+    const startXp = (ns.getPlayer().exp && ns.getPlayer().exp.hacking) || 0;
+    const t0 = Date.now();
 
     // --- fill all RAM with xp workers, and keep topping up (new pservers, freed RAM) ---
     while (true) {
@@ -78,8 +82,11 @@ export async function main(ns) {
                 if (pid) { threads += free; hosts++; }
             }
         }
-        if (threads > 0) ns.tprint("xpfarm: +" + threads + " xp threads on " + target
-            + " across " + hosts + " servers @L" + ns.getHackingLevel());
+        const gained = ((ns.getPlayer().exp && ns.getPlayer().exp.hacking) || 0) - startXp;
+        const secs = Math.max(1, (Date.now() - t0) / 1000);
+        ns.tprint("xpfarm: L" + ns.getHackingLevel() + " on " + target
+            + (threads > 0 ? "  (+" + threads + " threads/" + hosts + " hosts)" : "")
+            + "  | XP +" + gained.toFixed(0) + ", " + (gained / secs).toFixed(2) + " xp/s since start");
         await ns.sleep(15000);
     }
 }
