@@ -33,7 +33,8 @@ export async function main(ns) {
         const out = [], seen = new Set(["home"]), q = ["home"];
         while (q.length) {
             const cur = q.shift(); out.push(cur);
-            for (const n of ns.scan(cur)) if (!seen.has(n)) { seen.add(n); q.push(n); }
+            // skip hacknet servers: running share workers there zeroes their hash rate (their whole income).
+            for (const n of ns.scan(cur)) if (!seen.has(n) && !n.startsWith("hacknet-")) { seen.add(n); q.push(n); }
         }
         return out;
     };
