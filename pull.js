@@ -37,7 +37,7 @@ export async function main(ns) {
     "batch-math.js", "batch-live.js", "sharecap.js",
     "bhack.js", "bgrow.js", "bweaken.js",
     "bprep.js", "bdiag.js", "bbatch.js",
-    "killfarm.js", "bbatch2.js", "xpw.js", "trader.js", "casino.js", "update-pull.js"
+    "killfarm.js", "bbatch2.js", "xpw.js", "trader.js", "casino.js", "augbuy.js", "update-pull.js"
   ];
   const base = "https://raw.githubusercontent.com/" + USER + "/" + REPO + "/" + BRANCH + "/";
 
