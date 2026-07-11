@@ -45,6 +45,14 @@ export async function main(ns) {
                 } else if (action === "puzzles") {
                     const pid = ns.run("puzzles.js");
                     ns.toast(pid ? "running puzzles.js" : "puzzles.js not found", pid ? "info" : "error", 2500);
+                } else if (action === "xpfarm") {
+                    const pid = ns.run("xpfarm.js");
+                    ns.toast(pid ? "xpfarm.js launched (floods XP workers; kills money farm, leaves trader)" : "xpfarm.js not found", pid ? "success" : "error", 3000);
+                } else if (action === "killxp") {
+                    ns.scriptKill("xpfarm.js", "home");
+                    let k = 0; const seen = new Set(["home"]), q = ["home"];
+                    while (q.length) { const c = q.shift(); if (ns.scriptKill("xp.js", c)) k++; for (const n of ns.scan(c)) if (!seen.has(n)) { seen.add(n); q.push(n); } }
+                    ns.toast("stopped xpfarm + xp workers (" + k + " hosts)", "success", 2500);
                 } else if (action === "restart") {
                     let cargs = [];
                     for (const p of ns.ps("home")) if (p.filename === "coordinator.js") { cargs = p.args; break; }
@@ -600,6 +608,8 @@ export async function main(ns) {
                     btn("COLD START", () => { action = "coldstart"; }, incomeColor),
                     btn("pull", () => { action = "pull"; }, hackColor),
                     btn("puzzles", () => { action = "puzzles"; }, hackColor),
+                    btn("xp farm", () => { action = "xpfarm"; }, hackColor),
+                    btn("kill xp", () => { action = "killxp"; }, warnColor),
                     btn("restart coord", () => { action = "restart"; }, hackColor),
                     btn("kill coord", () => { action = "killcoord"; }, warnColor),
                     btn("reset coord", () => { action = "resetcoord"; }, warnColor),

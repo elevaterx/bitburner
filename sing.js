@@ -62,7 +62,7 @@ export async function main(ns) {
         // $0 (ScriptHackMoneyGain = 0). Suppress every hacking-economy phase so we don't
         // burn stock capital or hold FOCUS (which blocks the casino seed bootstrap), and
         // travel to Aevum for the casino. Re-profile for the rep grind once stocks fund you.
-        8: { label: "Ghost of Wall Street (stocks-only)", programs: false, backdoors: false, crime: false, work: false, travelCity: "Aevum" },
+        8: { label: "Ghost of Wall Street (stocks-only)", programs: false, backdoors: true, crime: false, work: false, travelCity: "Aevum" },
         // Add nodes as you reach them; confirm behavior live before trusting a hand-written
         // profile. e.g. BN2 (gangs -- hacking still earns), BN3 (corp, all income -75%).
     };
