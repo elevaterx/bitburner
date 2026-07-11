@@ -54,10 +54,12 @@ export async function main(ns) {
     while (true) {
         const MAX_NODES = ns.hacknet.maxNumNodes();   // real cap (23 nodes / 20 servers / fork limit)
         // BN9: convert accumulated hashes to cash first so production isn't wasted (no-op with plain nodes).
+        const mBeforeSell = ns.getPlayer().money;
         try {
             let hc = ns.hacknet.hashCost(HASH_SPEND);
             while (ns.hacknet.numHashes() >= hc) { if (!ns.hacknet.spendHashes(HASH_SPEND)) break; hc = ns.hacknet.hashCost(HASH_SPEND); }
         } catch (e) {}
+        const loopSale = Math.max(0, ns.getPlayer().money - mBeforeSell);   // cash this loop's hash sale produced
 
         const lines = [];
         const log = (s) => lines.push(s);
@@ -75,7 +77,8 @@ export async function main(ns) {
         }
         let hashes = 0, hcap = 0;
         try { hashes = ns.hacknet.numHashes(); hcap = ns.hacknet.hashCapacity(); } catch (e) {}
-        log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + "/s  budget $" + fmt(remaining) + " ===");
+        const hnRate = loopSale / (LOOP_MS / 1000);   // realized $/s from hash sales this loop
+        log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + " h/s  $" + fmt(hnRate) + "/s  budget $" + fmt(remaining) + " ===");
         if (hcap > 0) log("  hashes " + fmt(hashes) + "/" + fmt(hcap) + "  selling: " + HASH_SPEND);
 
         // --- RAM-aware: buy the reserved home upgrade once cash covers it (real singularity call) ---
