@@ -47,7 +47,9 @@ export async function main(ns) {
     const AUTO_HOME   = !ns.args.includes("nohome");    // buy home RAM to fit the stack (default on)
     const AUTO_LAUNCH = !ns.args.includes("nolaunch");  // launch trader/hud1/sing as RAM allows (default on)
     const HOME_TARGET = 256;   // GB: stop buying home RAM here (fits the full stack + headroom)
-    const STACK = ["trader.js", "hud1.js", "sing.js"];  // launch order (income, eyes, endgame) as RAM frees up
+    const STACK = ["hud1.js", "sing.js"];  // launch as RAM frees up. NOTE: trader deliberately excluded
+    // in BN9 -- it converts cash to illiquid stock positions, which fights aug/donation buying (both
+    // need liquid cash). Run trader.js manually if you want stock income in a node where that's fine.
 
     while (true) {
         const MAX_NODES = ns.hacknet.maxNumNodes();   // real cap (23 nodes / 20 servers / fork limit)
