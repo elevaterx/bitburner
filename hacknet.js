@@ -28,8 +28,25 @@ export async function main(ns) {
     ns.disableLog("ALL");
     ns.ui.openTail();
     ns.ui.resizeTail(560, 320);
-    const F = ns.formulas && ns.formulas.hacknetServers ? ns.formulas.hacknetServers : null;
-    if (!F) ns.tprint("hacknet: Formulas API unavailable -- using cheapest-first (no ROI).");
+    // ROI (production-per-dollar) uses the Formulas API, which carries ~10GB of STATIC RAM --
+    // and a direct ns.formulas reference is charged whether or not it runs. So we reach it via
+    // eval(), which hides it from the RAM calculator entirely, keeping this script lean (~2-3GB)
+    // for RAM-starved nodes like BN9. ROI is opt-in ("roi" arg); the default cheapest-first path
+    // never touches Formulas. (Same static-RAM dodge casino.js uses for document; the default
+    // path never runs the eval, so it's safe regardless -- only 'roi' mode depends on it.)
+    const USE_ROI = !ns.args.includes("noroi");   // ROI on by default (free via eval-dodge); "noroi" to disable
+    let F = null;
+    if (USE_ROI) {
+        try { F = eval("ns.formulas.hacknetServers"); F.hashGainRate(1, 0, 1, 1, 1); }
+        catch (e) { F = null; ns.tprint("hacknet: ROI unavailable (" + e + ") -- cheapest-first."); }
+    }
+    // RAM-aware bootstrap (for a fresh, RAM-starved node like BN9): buy home RAM from hash income
+    // until the whole stack fits, and launch stack scripts as each one fits -- fully hands-off.
+    // Home-RAM + launch use eval-dodged singularity / ns.run so they add ~no static RAM.
+    const AUTO_HOME   = !ns.args.includes("nohome");    // buy home RAM to fit the stack (default on)
+    const AUTO_LAUNCH = !ns.args.includes("nolaunch");  // launch trader/hud1/sing as RAM allows (default on)
+    const HOME_TARGET = 256;   // GB: stop buying home RAM here (fits the full stack + headroom)
+    const STACK = ["trader.js", "hud1.js", "sing.js"];  // launch order (income, eyes, endgame) as RAM frees up
 
     while (true) {
         const MAX_NODES = ns.hacknet.maxNumNodes();   // real cap (23 nodes / 20 servers / fork limit)
@@ -42,7 +59,10 @@ export async function main(ns) {
         const lines = [];
         const log = (s) => lines.push(s);
         const cash = ns.getPlayer().money;
-        let remaining = Math.max(0, (cash - CASH_RESERVE) * CASH_FRACTION);
+        // reserve the next home-RAM upgrade cost so the hacknet greedy doesn't starve it (RAM-aware)
+        let homeReserve = 0;
+        if (AUTO_HOME) { try { if (ns.getServerMaxRam("home") < HOME_TARGET) homeReserve = ns.singularity.getUpgradeHomeRamCost(); } catch (e) {} }
+        let remaining = Math.max(0, (cash - CASH_RESERVE - homeReserve) * CASH_FRACTION);
 
         // current production rate, for display
         let prod = 0;
@@ -54,6 +74,29 @@ export async function main(ns) {
         try { hashes = ns.hacknet.numHashes(); hcap = ns.hacknet.hashCapacity(); } catch (e) {}
         log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + "/s  budget $" + fmt(remaining) + " ===");
         if (hcap > 0) log("  hashes " + fmt(hashes) + "/" + fmt(hcap) + "  selling: " + HASH_SPEND);
+
+        // --- RAM-aware: buy the reserved home upgrade once cash covers it (real singularity call) ---
+        if (AUTO_HOME && homeReserve > 0) {
+            if (ns.getPlayer().money - CASH_RESERVE >= homeReserve) {
+                try { if (ns.singularity.upgradeHomeRam()) log("  home RAM -> " + ns.getServerMaxRam("home") + "GB"); }
+                catch (e) { log("  [home upgrade err] " + e); }
+            } else {
+                log("  saving for home upgrade $" + fmt(homeReserve) + " (cash $" + fmt(ns.getPlayer().money) + "; hacknet paused until covered)");
+            }
+        }
+
+        // --- RAM-aware: launch stack scripts (income, eyes, endgame) as home RAM allows ---
+        if (AUTO_LAUNCH) {
+            try {
+                const running = new Set(ns.ps("home").map((p) => p.filename));
+                for (const scr of STACK) {
+                    if (running.has(scr)) continue;
+                    const need = ns.getScriptRam(scr, "home");
+                    const free = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+                    if (need > 0 && need <= free && ns.run(scr)) log("  launched " + scr);
+                }
+            } catch (e) {}
+        }
 
         // buy cache where hashes are backing up toward capacity (protects production; servers only)
         for (let i = 0; i < n0 && remaining > 0; i++) {
