@@ -50,15 +50,17 @@ export async function main(ns) {
     const SETTLE_MS      = 600;       // pause between ordered launches so each claims RAM before the next
     const FORCE_FARM     = ns.args[3] === "farm";   // override: run the farm even in a stocks-only node
 
-    // Node-aware: in a stocks-only / dead-hack node (BN8), the farm earns $0 and just
-    // eats the pool, so we skip purchaser + coordinator and boot only sing + hud1.
+    // Node-aware: in a dead-hack node (BN8 stocks-only, BN9 hacknet), the farm earns ~$0 and
+    // just eats the pool, so we skip purchaser + coordinator and boot only sing + hud1 (plus the
+    // node's income engine where we have one, e.g. hacknet.js in BN9).
+    let nodeNum = 0; try { nodeNum = ns.getResetInfo().currentNode; } catch (e) {}
     const hackDead = hackIncomeDead(ns);
-    const farmMode = !hackDead || FORCE_FARM;   // true = normal farm boot; false = BN8 quiet boot
+    const farmMode = !hackDead || FORCE_FARM;   // true = normal farm boot; false = quiet boot
 
     const log = (m) => ns.tprint("[boot] " + m);
     log("cold-start bootstrap beginning...");
-    if (!farmMode) log("NODE is stocks-only (scripted hacking earns $0) -- quiet boot: sing + hud1 only, "
-        + "farm + purchaser SKIPPED. Income is the stock market. (arg[3]='farm' forces the farm.)");
+    if (!farmMode) log("NODE hacking-for-money is dead -- quiet boot: sing + hud1"
+        + (nodeNum === 9 ? " + hacknet" : "") + " only, farm + purchaser SKIPPED. (arg[3]='farm' forces the farm.)");
 
     // ---- 0. clean slate: kill managed scripts if already running (idempotent). NEVER kills hud1
     //         (the button runs FROM it) or hud2 (on-demand). Sweeps sh.js workers fleet-wide. ----
@@ -83,7 +85,7 @@ export async function main(ns) {
         log(pid ? ("purchaser.js up (" + PURCHASER_FRAC + " frac, $" + (PURCHASER_RES / 1e3) + "k reserve)") : "purchaser.js FAILED");
         await ns.sleep(SETTLE_MS);
     } else if (!farmMode) {
-        log("purchaser SKIPPED (stocks-only node -- cloud servers earn $0; hold capital for stocks)");
+        log("purchaser SKIPPED (dead-hack node -- cloud earns ~$0, and may be unavailable e.g. BN9)");
     } else {
         log("purchaser SKIPPED (off by default; pass arg[1]>0 to enable cloud buying)");
     }
@@ -105,8 +107,14 @@ export async function main(ns) {
         log(pid ? ("coordinator.js up (preset '" + COORD_PRESET + "') -- takes remaining pool") : "coordinator.js FAILED");
         await ns.sleep(SETTLE_MS);
     } else {
-        log("coordinator SKIPPED (stocks-only node: farm earns $0). Income is the stock market -- run the trader. "
-            + "arg[3]='farm' forces the farm (e.g. as an XP tap).");
+        log("coordinator SKIPPED (hacking-for-money is dead here). arg[3]='farm' forces it (e.g. as an XP tap).");
+        if (nodeNum === 9) {
+            pid = ns.run("hacknet.js");
+            log(pid ? "hacknet.js up -- BN9 hash economy (sells hashes for cash)" : "hacknet.js FAILED");
+            await ns.sleep(SETTLE_MS);
+        } else {
+            log("  income engine is manual here -- run the trader (stocks work via SF8).");
+        }
     }
 
     // ---- 5. ensure hud1 is running (launch only if absent; never kill it -- may be our caller) ----
@@ -140,11 +148,18 @@ function bfs(ns) {
 // any node with ScriptHackMoneyGain ~ 0), so the farm produces no income. Explicit
 // BN8 check first (cheap); the multiplier heuristic catches other dead-hack nodes.
 // getBitNodeMultipliers needs SF5 -- try/catch defaults to "not dead" if unavailable.
+// True where scripted hacking can't meaningfully earn: farm income ~ ScriptHackMoneyGain x
+// ServerMaxMoney, which is ~0 in BN8 (gain 0) and BN9 (maxMoney 0.01) -- so both are caught
+// without hardcoding node numbers. getBitNodeMultipliers needs SF5; defaults to "alive" if absent.
 function hackIncomeDead(ns) {
     try {
-        if (ns.getResetInfo().currentNode === 8) return true;   // stocks-only node
+        if (ns.getResetInfo().currentNode === 8) return true;   // stocks-only (fast path)
         const m = ns.getBitNodeMultipliers();
-        if (m && typeof m.ScriptHackMoneyGain === "number" && m.ScriptHackMoneyGain < 0.01) return true;
+        if (m) {
+            const gain = typeof m.ScriptHackMoneyGain === "number" ? m.ScriptHackMoneyGain : 1;
+            const maxMoney = typeof m.ServerMaxMoney === "number" ? m.ServerMaxMoney : 1;
+            if (gain * maxMoney < 0.05) return true;
+        }
     } catch (e) {}
     return false;
 }

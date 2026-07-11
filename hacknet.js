@@ -28,6 +28,8 @@ export async function main(ns) {
     ns.disableLog("ALL");
     ns.ui.openTail();
     ns.ui.resizeTail(560, 320);
+    const F = ns.formulas && ns.formulas.hacknetServers ? ns.formulas.hacknetServers : null;
+    if (!F) ns.tprint("hacknet: Formulas API unavailable -- using cheapest-first (no ROI).");
 
     while (true) {
         const MAX_NODES = ns.hacknet.maxNumNodes();   // real cap (23 nodes / 20 servers / fork limit)
@@ -64,39 +66,43 @@ export async function main(ns) {
             } catch (e) {}
         }
 
-        // greedy loop: each iteration finds the single cheapest upgrade and buys it
+        // greedy loop: each iteration buys the affordable upgrade with the best hash-production
+        // gain PER DOLLAR (ROI, via Formulas). Production mult cancels in the ratio so we pass
+        // mult=1. Falls back to cheapest-first when Formulas isn't usable (plain nodes / no SF5).
+        let useF = false;
+        try { useF = !!F && ns.hacknet.hashCapacity() > 0; } catch (e) {}
         let upgrades = 0;
         let spent = 0;
         const safetyCap = 200;   // hard upper bound on per-loop buys; prevents pathological spin
         while (upgrades < safetyCap) {
             const numNodes = ns.hacknet.numNodes();
-            let best = null;
+            let best = null, bestScore = -1;
+            const consider = (cand) => {
+                if (!Number.isFinite(cand.cost) || cand.cost > remaining) return;
+                const score = useF ? cand.gain / cand.cost : 1 / cand.cost;   // ROI, or cheapest-first
+                if (score > bestScore) { bestScore = score; best = cand; }
+            };
 
-            // option: buy a new node
+            // option: buy a new server (fresh: level 1 / ram 1 / cores 1)
             if (numNodes < MAX_NODES) {
                 try {
                     const c = ns.hacknet.getPurchaseNodeCost();
-                    if (Number.isFinite(c) && (!best || c < best.cost)) best = { kind: "buy", cost: c };
+                    consider({ kind: "buy", cost: c, gain: useF ? F.hashGainRate(1, 0, 1, 1, 1) : 1 });
                 } catch (e) {}
             }
-            // options: upgrade level/RAM/core on each existing node
+            // options: level / RAM / core on each existing server (RAM upgrade doubles maxRam)
             for (let i = 0; i < numNodes; i++) {
                 try {
-                    const lc = ns.hacknet.getLevelUpgradeCost(i, 1);
-                    if (Number.isFinite(lc) && (!best || lc < best.cost)) best = { kind: "level", i, cost: lc };
-                } catch (e) {}
-                try {
-                    const rc = ns.hacknet.getRamUpgradeCost(i, 1);
-                    if (Number.isFinite(rc) && (!best || rc < best.cost)) best = { kind: "ram", i, cost: rc };
-                } catch (e) {}
-                try {
-                    const cc = ns.hacknet.getCoreUpgradeCost(i, 1);
-                    if (Number.isFinite(cc) && (!best || cc < best.cost)) best = { kind: "core", i, cost: cc };
+                    const s = ns.hacknet.getNodeStats(i);
+                    const ru = s.ramUsed || 0;
+                    const cur = useF ? F.hashGainRate(s.level, ru, s.ram, s.cores, 1) : 0;
+                    consider({ kind: "level", i, cost: ns.hacknet.getLevelUpgradeCost(i, 1), gain: useF ? F.hashGainRate(s.level + 1, ru, s.ram, s.cores, 1) - cur : 1 });
+                    consider({ kind: "ram",   i, cost: ns.hacknet.getRamUpgradeCost(i, 1),   gain: useF ? F.hashGainRate(s.level, ru, s.ram * 2, s.cores, 1) - cur : 1 });
+                    consider({ kind: "core",  i, cost: ns.hacknet.getCoreUpgradeCost(i, 1),  gain: useF ? F.hashGainRate(s.level, ru, s.ram, s.cores + 1, 1) - cur : 1 });
                 } catch (e) {}
             }
 
-            if (!best) break;                  // nothing left to upgrade
-            if (best.cost > remaining) break;  // can't afford the cheapest
+            if (!best) break;   // nothing affordable/available left (consider already filtered cost > remaining)
 
             // execute the chosen upgrade
             let ok = false;

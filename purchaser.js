@@ -90,11 +90,18 @@ function freeName(ns, names) {
 // BN8 check first (cheap); ScriptHackMoneyGain heuristic catches other dead-hack
 // nodes. getBitNodeMultipliers needs SF5 -- the try/catch defaults to "not dead"
 // if it's unavailable, so purchaser still runs normally where we can't tell.
+// True where scripted hacking can't meaningfully earn: farm income ~ ScriptHackMoneyGain x
+// ServerMaxMoney, which is ~0 in BN8 (gain 0) and BN9 (maxMoney 0.01) -- so both are caught
+// without hardcoding node numbers. Also covers BN9's CloudServerLimit 0 case by skipping cleanly.
 function hackIncomeDead(ns) {
     try {
-        if (ns.getResetInfo().currentNode === 8) return true;   // stocks-only node
+        if (ns.getResetInfo().currentNode === 8) return true;   // stocks-only (fast path)
         const m = ns.getBitNodeMultipliers();
-        if (m && typeof m.ScriptHackMoneyGain === "number" && m.ScriptHackMoneyGain < 0.01) return true;
+        if (m) {
+            const gain = typeof m.ScriptHackMoneyGain === "number" ? m.ScriptHackMoneyGain : 1;
+            const maxMoney = typeof m.ServerMaxMoney === "number" ? m.ServerMaxMoney : 1;
+            if (gain * maxMoney < 0.05) return true;
+        }
     } catch (e) {}
     return false;
 }
