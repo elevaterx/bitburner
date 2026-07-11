@@ -1,21 +1,22 @@
-/** hacknet.js -- simple greedy hacknet node manager.
- *  Each loop: scan all possible next upgrades (buy new node, or upgrade level/RAM/cores
- *  on each existing node), pick the cheapest, buy it if budget allows. Repeat until
- *  budget exhausted or no affordable upgrade remains.
+/** hacknet.js -- ROI-optimal Hacknet manager + RAM-aware bootstrap (built for BN9).
+ *  Each loop: sell accumulated hashes to cash, then buy the upgrade (new server, or
+ *  level/RAM/core on an existing one) with the best hash-production gain PER DOLLAR.
  *
- *  No ROI math -- relies on "cheapest first" being a sound greedy in early game where
- *  almost every upgrade pays back quickly. Maxed slots (e.g., level 200) return Infinity
- *  from the cost API and are filtered out via isFinite.
+ *  ROI (default on) uses the Formulas API for the gain math. Formulas carries ~10GB of
+ *  static RAM, so it's reached via eval() to hide it from the RAM calculator, keeping the
+ *  script lean (~7-8GB incl. the singularity home-buy). "noroi" falls back to cheapest-first.
  *
- *  Tunables at top:
- *    CASH_RESERVE   -- never drop player cash below this
- *    CASH_FRACTION  -- spend at most this fraction of (cash - reserve) per loop
- *    MAX_NODES      -- hard cap on node count (vanilla = 23)
- *    LOOP_MS        -- seconds between iterations
+ *  RAM-AWARE BOOTSTRAP (for a fresh, RAM-starved node): reserves the next home-RAM upgrade
+ *  cost out of its own budget (so cash accumulates instead of being spent on hacknet), buys
+ *  home RAM via real singularity calls until HOME_TARGET, and auto-launches the stack as RAM
+ *  frees up -- hud1 immediately, but trader/sing held until home is maxed (they spend cash and
+ *  would deadlock the home saving). In steady state (home >= target) all of this goes dormant.
  *
- *  Static RAM should be low (hacknet API functions are 0-0.05 GB each + script base 1.6).
- *  Verify with `mem hacknet.js`.
- *  Must be added to pull.js's file list to deploy via pull.
+ *  args:  [hashSpend] -- hash upgrade to buy (default "Sell for Money")
+ *  flags: noroi (cheapest-first) | nohome (don't buy home RAM) | nolaunch (don't auto-start stack)
+ *
+ *  Tunables at top: CASH_RESERVE, CASH_FRACTION, CACHE_AT, HOME_TARGET, STACK, LOOP_MS.
+ *  Verify RAM with `mem hacknet.js`. Must be in pull.js to deploy.
  *
  *  @param {NS} ns */
 export async function main(ns) {
@@ -85,12 +86,16 @@ export async function main(ns) {
             }
         }
 
-        // --- RAM-aware: launch stack scripts (income, eyes, endgame) as home RAM allows ---
+        // --- RAM-aware: launch stack scripts as home RAM allows (income, eyes, endgame) ---
+        // hud1 costs no cash so it comes up as soon as it fits; trader and sing SPEND player cash
+        // and would starve the home-RAM saving into a deadlock, so we hold them until home is maxed.
         if (AUTO_LAUNCH) {
             try {
+                const homeAtTarget = ns.getServerMaxRam("home") >= HOME_TARGET;
                 const running = new Set(ns.ps("home").map((p) => p.filename));
                 for (const scr of STACK) {
                     if (running.has(scr)) continue;
+                    if (scr !== "hud1.js" && !homeAtTarget) continue;   // hold cash-spenders until home done
                     const need = ns.getScriptRam(scr, "home");
                     const free = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
                     if (need > 0 && need <= free && ns.run(scr)) log("  launched " + scr);
