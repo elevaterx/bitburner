@@ -11,6 +11,8 @@ export async function main(ns) {
     const HOME_RESERVE = 24;        // GB kept free on home for hud/pull/etc
     const WORKER = "xp.js";
     ns.disableLog("ALL");
+    ns.ui.openTail();
+    ns.ui.resizeTail(520, 150);
 
     // singleton: kill any older xpfarm instance, newest wins
     for (const p of ns.ps("home")) {
@@ -52,8 +54,9 @@ export async function main(ns) {
         .map(h => ({ h, score: (3 + 0.3 * ns.getServerMinSecurityLevel(h)) / Math.max(1, ns.getGrowTime(h)) }))
         .sort((a, b) => b.score - a.score);
     const target = override || (ranked.length ? ranked[0].h : "n00dles");
-    ns.tprint("xpfarm target: " + target + (override ? " (override)" : " (auto)")
-        + "   top candidates: " + ranked.slice(0, 5).map(r => r.h).join(", "));
+    const header = "=== xpfarm  target " + target + (override ? " (override)" : " (auto)") + " ===";
+    ns.print(header);
+    ns.print("  top candidates: " + ranked.slice(0, 5).map(r => r.h).join(", "));
 
     // --- switch to XP mode: stop the money farm so its RAM is free (leaves hud/pull/etc alone) ---
     const moneyScripts = ["coordinator.js", "prep.js", "h.js"];
@@ -84,9 +87,11 @@ export async function main(ns) {
         }
         const gained = ((ns.getPlayer().exp && ns.getPlayer().exp.hacking) || 0) - startXp;
         const secs = Math.max(1, (Date.now() - t0) / 1000);
-        ns.tprint("xpfarm: L" + ns.getHackingLevel() + " on " + target
-            + (threads > 0 ? "  (+" + threads + " threads/" + hosts + " hosts)" : "")
-            + "  | XP +" + gained.toFixed(0) + ", " + (gained / secs).toFixed(2) + " xp/s since start");
+        ns.clearLog();
+        ns.print(header);
+        ns.print("  L" + ns.getHackingLevel() + " on " + target
+            + (threads > 0 ? "  (+" + threads + " threads / " + hosts + " hosts)" : "  (pool full)")
+            + "\n  XP +" + gained.toFixed(0) + "   " + (gained / secs).toFixed(2) + " xp/s since start");
         await ns.sleep(15000);
     }
 }
