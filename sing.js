@@ -63,6 +63,12 @@ export async function main(ns) {
         // burn stock capital or hold FOCUS (which blocks the casino seed bootstrap), and
         // travel to Aevum for the casino. Re-profile for the rep grind once stocks fund you.
         8: { label: "Ghost of Wall Street (stocks-only)", programs: false, backdoors: true, crime: false, work: false, travelCity: "Aevum" },
+        // BN9 Hacktocracy: hacknet servers (hashes) are the economy -- run hacknet.js for income.
+        // Money-hacking is near-dead (ServerMaxMoney 0.01) and XP is brutal (HackExpGain 0.05),
+        // and crime money is only halved but grabs focus for little gain -- so suppress crime and
+        // let hacknet + the trader (SF8 gives WSE/TIX) provide income. Keep programs (RAM),
+        // backdoors (faction invites), and work (rep) for the aug endgame.
+        9: { label: "Hacktocracy (hacknet economy)", programs: true, backdoors: true, crime: false, work: true, travelCity: null },
         // Add nodes as you reach them; confirm behavior live before trusting a hand-written
         // profile. e.g. BN2 (gangs -- hacking still earns), BN3 (corp, all income -75%).
     };

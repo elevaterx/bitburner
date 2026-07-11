@@ -21,7 +21,8 @@
 export async function main(ns) {
     const CASH_RESERVE  = 1_000_000;   // floor under which we don't spend
     const CASH_FRACTION = 0.5;         // spend up to this fraction of (cash - reserve) per loop
-    const MAX_NODES     = 23;          // vanilla limit; raise if your fork allows more
+    const HASH_SPEND    = ns.args[0] || "Sell for Money";  // hash upgrade bought each loop (servers only)
+    const CACHE_AT      = 0.85;        // buy cache when hashes exceed this frac of capacity
     const LOOP_MS       = 5000;
 
     ns.disableLog("ALL");
@@ -29,6 +30,13 @@ export async function main(ns) {
     ns.ui.resizeTail(560, 320);
 
     while (true) {
+        const MAX_NODES = ns.hacknet.maxNumNodes();   // real cap (23 nodes / 20 servers / fork limit)
+        // BN9: convert accumulated hashes to cash first so production isn't wasted (no-op with plain nodes).
+        try {
+            let hc = ns.hacknet.hashCost(HASH_SPEND);
+            while (ns.hacknet.numHashes() >= hc) { if (!ns.hacknet.spendHashes(HASH_SPEND)) break; hc = ns.hacknet.hashCost(HASH_SPEND); }
+        } catch (e) {}
+
         const lines = [];
         const log = (s) => lines.push(s);
         const cash = ns.getPlayer().money;
@@ -40,7 +48,21 @@ export async function main(ns) {
         for (let i = 0; i < n0; i++) {
             try { prod += ns.hacknet.getNodeStats(i).production || 0; } catch (e) {}
         }
-        log("=== hacknet  nodes " + n0 + "  prod $" + fmt(prod) + "/s  budget $" + fmt(remaining) + " ===");
+        let hashes = 0, hcap = 0;
+        try { hashes = ns.hacknet.numHashes(); hcap = ns.hacknet.hashCapacity(); } catch (e) {}
+        log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + "/s  budget $" + fmt(remaining) + " ===");
+        if (hcap > 0) log("  hashes " + fmt(hashes) + "/" + fmt(hcap) + "  selling: " + HASH_SPEND);
+
+        // buy cache where hashes are backing up toward capacity (protects production; servers only)
+        for (let i = 0; i < n0 && remaining > 0; i++) {
+            try {
+                const st = ns.hacknet.getNodeStats(i);
+                if (st.hashCapacity && ns.hacknet.numHashes() > st.hashCapacity * CACHE_AT) {
+                    const cc = ns.hacknet.getCacheUpgradeCost(i, 1);
+                    if (Number.isFinite(cc) && cc <= remaining && ns.hacknet.upgradeCache(i, 1)) remaining -= cc;
+                }
+            } catch (e) {}
+        }
 
         // greedy loop: each iteration finds the single cheapest upgrade and buys it
         let upgrades = 0;
