@@ -28,12 +28,22 @@ export async function main(ns) {
     ns.ui.openTail();
     const doc = eval("document");            // eval() dodges the 25GB static RAM charge
     const win = eval("window");
-    const TARGET = Number(ns.args[0]) || 10e9;
-    const BET    = Math.min(Number(ns.args[1]) || 1e8, 1e8);
-    const NOSCUM = ns.args[2] === "noscum";
+    const TARGET   = Number(ns.args[0]) || 10e9;    // default to the casino's ~$10b cap; ramp makes the full climb quick
+    const BET_FRAC = 0.90;                           // ramp: bet this frac of bankroll each hand (save-scummed)
+    const MAX_BET  = 1e8, MIN_BET = 1e6;             // blackjack table limits ($100m max, $1m min)
+    const NOSCUM   = ns.args.includes("noscum");
+    const SOLO     = ns.args.includes("solo");       // kill the stack so it doesn't fight for the player action
     const log = (m) => ns.print(m);
+    const dm = (n) => n >= 1e9 ? (n / 1e9).toFixed(2) + "b" : (n / 1e6).toFixed(0) + "m";
 
-    if (ns.getPlayer().money >= TARGET) { ns.tprint("casino: already >= target $" + (TARGET / 1e9) + "b. Nothing to do."); return; }
+    if (SOLO) {
+        for (const s of ["hacknet.js", "sing.js", "xpfarm.js", "trader.js"]) ns.scriptKill(s, "home");
+        ns.tprint("casino: SOLO -- killed hacknet/sing/xpfarm/trader; `run boot.js` to restore when done.");
+    }
+    try { ns.singularity.stopAction(); } catch (e) {}   // drop faction work/study so nav isn't stuck on the Work screen
+    ns.tprint("casino: if the stack reappears on reload, clear Options -> 'script to run after reload' (remove boot.js) while this runs.");
+
+    if (ns.getPlayer().money >= TARGET) { ns.tprint("casino: already >= target $" + dm(TARGET) + ". Nothing to do."); return; }
 
     if (!(await navToBlackjack(ns, doc, log))) {
         ns.tprint("casino: could not reach Blackjack. Be in Aevum, then run again. Aborting.");
@@ -41,7 +51,7 @@ export async function main(ns) {
     }
     const inst = findBlackjack(doc);
     if (!inst) { ns.tprint("casino: Blackjack mounted but instance not found. Aborting."); return; }
-    log("casino: at blackjack. target $" + (TARGET / 1e9).toFixed(1) + "b  bet $" + (BET / 1e6) + "m  " + (NOSCUM ? "[NOSCUM test]" : "[save-scum]"));
+    log("casino: at blackjack. target $" + dm(TARGET) + "  ramp " + (BET_FRAC * 100).toFixed(0) + "% (cap $" + (MAX_BET / 1e6) + "m)  " + (NOSCUM ? "[NOSCUM]" : "[save-scum]"));
 
     if (!NOSCUM) {
         if (!triggerSave(doc)) log("casino: WARNING -- 'save game' button not found; losses won't revert! Check the overview is expanded.");
@@ -51,7 +61,8 @@ export async function main(ns) {
     let hands = 0, wins = 0, losses = 0, ties = 0, errs = 0;
     while (ns.getPlayer().money < TARGET) {
         const m0 = ns.getPlayer().money;
-        const ok = await playHand(ns, inst, BET, log);
+        const bet = Math.min(Math.max(ns.getPlayer().money * BET_FRAC, MIN_BET), MAX_BET);
+        const ok = await playHand(ns, inst, bet, log);
         if (!ok) {
             if (++errs >= 3) { ns.tprint("casino: 3 hand errors -- stopping."); return; }
             await ns.sleep(500);
@@ -66,14 +77,14 @@ export async function main(ns) {
             if (!NOSCUM) { await ns.sleep(150); win.location.reload(); return; }   // revert; script restarts & resumes
         } else if (delta > 0) {
             wins++;
-            log("hand " + hands + ": +" + (delta / 1e6).toFixed(0) + "m  cash $" + (ns.getPlayer().money / 1e9).toFixed(2) + "b  | W" + wins + " L" + losses + " T" + ties);
+            log("hand " + hands + ": +" + (delta / 1e6).toFixed(1) + "m  cash $" + dm(ns.getPlayer().money) + "  | W" + wins + " L" + losses + " T" + ties);
             if (!NOSCUM) { triggerSave(doc); await ns.sleep(500); }
         } else {
             ties++;
         }
         await ns.sleep(150);
     }
-    ns.tprint("casino: reached $" + (ns.getPlayer().money / 1e9).toFixed(2) + "b. Done. (W" + wins + " L" + losses + " T" + ties + ")");
+    ns.tprint("casino: reached $" + dm(ns.getPlayer().money) + ". Done. (W" + wins + " L" + losses + " T" + ties + ")");
 }
 
 // ---- navigation / save (new in Phase 2) ----
@@ -81,6 +92,7 @@ export async function main(ns) {
 // Ensure the Blackjack component is mounted; if not, click City -> casino -> Play blackjack.
 // Each step polls for its element (pages take a moment to render) instead of fixed sleeps.
 async function navToBlackjack(ns, doc, log) {
+    try { ns.singularity.stopAction(); await ns.sleep(300); } catch (e) {}   // drop focus/work so the sidebar is navigable
     if (findBlackjack(doc)) return true;
     log("nav: routing to blackjack...");
     if (!(await waitClickText(ns, doc, "City", true, 3000)))                    { log("nav: sidebar 'City' not found (World section expanded?)"); return false; }
