@@ -92,6 +92,8 @@ export async function main(ns) {
         "CyberSec", "NiteSec", "The Black Hand", "BitRunners",
         // hacknet / early
         "Tian Di Hui", "Netburners",
+        // city faction -- joining Sector-12 BANS Chongqing/New Tokyo/Ishima/Volhaven this install
+        "Sector-12",
         // endgame
         "Daedalus", "Illuminati", "The Covenant",
         // megacorps -- if you've been invited, you've earned company rep, safe to join
@@ -113,6 +115,7 @@ export async function main(ns) {
         "NiteSec",
         "The Black Hand",
         "CyberSec",
+        "Sector-12",
         "Tian Di Hui",
         "Netburners",
     ];
@@ -318,7 +321,14 @@ export async function main(ns) {
         } else if (ENABLE_WORK && profile.work) {
             try {
                 const me = ns.getPlayer().factions;
-                const target = WORK_PRIORITY.find(f => me.includes(f));
+                // skip factions whose (non-NFG) augs you already own -- NFG is always buyable so it
+                // doesn't count as "still needs rep". Works the highest-priority member with augs left.
+                const owned = new Set(ns.singularity.getOwnedAugmentations(true));
+                const needsAugs = (f) => {
+                    try { return ns.singularity.getAugmentationsFromFaction(f).some(a => a !== "NeuroFlux Governor" && !owned.has(a)); }
+                    catch (e) { return true; }
+                };
+                const target = WORK_PRIORITY.find(f => me.includes(f) && needsAugs(f));
                 if (!target) {
                     log("  work: no priority faction joined yet");
                 } else {

@@ -14,6 +14,7 @@
  *
  *  args:  [hashSpend] -- hash upgrade to buy (default "Sell for Money")
  *  flags: noroi (cheapest-first) | nohome (don't buy home RAM) | nolaunch (don't auto-start stack)
+ *         hoard (sell hashes to cash but buy NOTHING -- pile up liquid money, e.g. for a donation round)
  *
  *  Tunables at top: CASH_RESERVE, CASH_FRACTION, CACHE_AT, HOME_TARGET, STACK, LOOP_MS.
  *  Verify RAM with `mem hacknet.js`. Must be in pull.js to deploy.
@@ -22,7 +23,8 @@
 export async function main(ns) {
     const CASH_RESERVE  = 1_000_000;   // floor under which we don't spend
     const CASH_FRACTION = 0.5;         // spend up to this fraction of (cash - reserve) per loop
-    const HASH_SPEND    = ns.args[0] || "Sell for Money";  // hash upgrade bought each loop (servers only)
+    const FLAGS = ["noroi", "nohome", "nolaunch", "hoard", "roi"];
+    const HASH_SPEND = ns.args.find((a) => typeof a === "string" && !FLAGS.includes(a)) || "Sell for Money";  // first non-flag arg
     const CACHE_AT      = 0.85;        // buy cache when hashes exceed this frac of capacity
     const LOOP_MS       = 5000;
 
@@ -46,10 +48,11 @@ export async function main(ns) {
     // Home-RAM + launch use eval-dodged singularity / ns.run so they add ~no static RAM.
     const AUTO_HOME   = !ns.args.includes("nohome");    // buy home RAM to fit the stack (default on)
     const AUTO_LAUNCH = !ns.args.includes("nolaunch");  // launch trader/hud1/sing as RAM allows (default on)
+    const HOARD       = ns.args.includes("hoard");      // sell hashes to cash but buy NOTHING -- just pile up money
     const HOME_TARGET = 256;   // GB: stop buying home RAM here (fits the full stack + headroom)
-    const STACK = ["hud1.js", "sing.js"];  // launch as RAM frees up. NOTE: trader deliberately excluded
-    // in BN9 -- it converts cash to illiquid stock positions, which fights aug/donation buying (both
-    // need liquid cash). Run trader.js manually if you want stock income in a node where that's fine.
+    const STACK = ["hud1.js"];  // ONLY hud1 auto-launches (no cash cost). sing.js and trader.js are
+    // deliberately NOT here: hacknet relaunching them fought casino/trader/donation phases repeatedly.
+    // Launch sing + trader yourself via boot.js -- hacknet's job is hacknet, not booting the stack.
 
     while (true) {
         const MAX_NODES = ns.hacknet.maxNumNodes();   // real cap (23 nodes / 20 servers / fork limit)
@@ -66,8 +69,8 @@ export async function main(ns) {
         const cash = ns.getPlayer().money;
         // reserve the next home-RAM upgrade cost so the hacknet greedy doesn't starve it (RAM-aware)
         let homeReserve = 0;
-        if (AUTO_HOME) { try { if (ns.getServerMaxRam("home") < HOME_TARGET) homeReserve = ns.singularity.getUpgradeHomeRamCost(); } catch (e) {} }
-        let remaining = Math.max(0, (cash - CASH_RESERVE - homeReserve) * CASH_FRACTION);
+        if (AUTO_HOME && !HOARD) { try { if (ns.getServerMaxRam("home") < HOME_TARGET) homeReserve = ns.singularity.getUpgradeHomeRamCost(); } catch (e) {} }
+        let remaining = HOARD ? 0 : Math.max(0, (cash - CASH_RESERVE - homeReserve) * CASH_FRACTION);
 
         // current production rate, for display
         let prod = 0;
@@ -78,7 +81,7 @@ export async function main(ns) {
         let hashes = 0, hcap = 0;
         try { hashes = ns.hacknet.numHashes(); hcap = ns.hacknet.hashCapacity(); } catch (e) {}
         const hnRate = loopSale / (LOOP_MS / 1000);   // realized $/s from hash sales this loop
-        log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + " h/s  $" + fmt(hnRate) + "/s  budget $" + fmt(remaining) + " ===");
+        log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + " h/s  $" + fmt(hnRate) + "/s  " + (HOARD ? "HOARDING (no spend)" : "budget $" + fmt(remaining)) + " ===");
         if (hcap > 0) log("  hashes " + fmt(hashes) + "/" + fmt(hcap) + "  selling: " + HASH_SPEND);
 
         // --- RAM-aware: buy the reserved home upgrade once cash covers it (real singularity call) ---
@@ -94,7 +97,7 @@ export async function main(ns) {
         // --- RAM-aware: launch stack scripts as home RAM allows (income, eyes, endgame) ---
         // hud1 costs no cash so it comes up as soon as it fits; trader and sing SPEND player cash
         // and would starve the home-RAM saving into a deadlock, so we hold them until home is maxed.
-        if (AUTO_LAUNCH) {
+        if (AUTO_LAUNCH && !HOARD) {
             try {
                 const homeAtTarget = ns.getServerMaxRam("home") >= HOME_TARGET;
                 const running = new Set(ns.ps("home").map((p) => p.filename));
