@@ -58,10 +58,12 @@ export async function main(ns) {
         await ns.sleep(900);
     }
 
-    let hands = 0, wins = 0, losses = 0, ties = 0, errs = 0;
+    let hands = 0, wins = 0, losses = 0, ties = 0, errs = 0, stall = 0;
     while (ns.getPlayer().money < TARGET) {
         const m0 = ns.getPlayer().money;
-        const bet = Math.min(Math.max(ns.getPlayer().money * BET_FRAC, MIN_BET), MAX_BET);
+        // can't make the table minimum -> casino can't help; exit instead of looping on rejected bets
+        if (m0 < MIN_BET) { ns.tprint("casino: $" + dm(m0) + " is below the $" + (MIN_BET / 1e6) + "m table minimum -- need seed cash first. Stopping."); return; }
+        const bet = Math.min(Math.max(m0 * BET_FRAC, MIN_BET), MAX_BET, m0);   // never wager more than you actually hold
         const ok = await playHand(ns, inst, bet, log);
         if (!ok) {
             if (++errs >= 3) { ns.tprint("casino: 3 hand errors -- stopping."); return; }
@@ -70,6 +72,9 @@ export async function main(ns) {
             continue;
         }
         const delta = ns.getPlayer().money - m0;
+        // stall guard: money not moving means we're wedged (rejected bets, blocked dialog, dead nav) -> bail
+        if (delta === 0) { if (++stall >= 8) { ns.tprint("casino: no progress over 8 hands -- stopping (wedged?)."); return; } }
+        else stall = 0;
         hands++;
         if (delta < 0) {
             losses++;
