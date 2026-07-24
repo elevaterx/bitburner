@@ -20,7 +20,9 @@
  *
  *  Caveats: (1) before installing augmentations, sell everything -- positions are
  *  lost on reset. (2) shorting is enabled only on 4S (accurate); EMA mode is long-only
- *  because an early estimate is too noisy to short safely.
+ *  because an early estimate is too noisy to short safely. (3) shorting ALSO requires
+ *  short-market access -- you must be in BN8 or hold Source-File 8 Level 2. Outside BN8,
+ *  SF8.1 grants WSE/TIX/4S but NOT shorting, so this runs long-only (4S) until SF8.2.
  *
  *  Must be added to pull.js. @param {NS} ns */
 export async function main(ns) {
@@ -55,6 +57,11 @@ export async function main(ns) {
     // forecast estimate = fraction of up-ticks over the window = a stable estimate of P(up).
     const hist = {}, lastPx = {};   // hist[sym] = [0/1,...] most-recent appended
 
+    // Short-selling access is gated separately from 4S: it requires BN8 or Source-File 8
+    // Level 2. Having 4S data does NOT imply it (in BN8 it happens to coincide; elsewhere,
+    // e.g. under SF8.1, you can hold 4S yet be unable to short). Probed once below.
+    let canShort;
+
     if (SELL_ALL) {
         const syms = ns.stock.getSymbols();
         let sold = 0;
@@ -84,6 +91,15 @@ export async function main(ns) {
         }
 
         const symbols = ns.stock.getSymbols();
+
+        // ---- short-access capability: probe ONCE (needs BN8 or SF8.2; 4S does not imply it) ----
+        // A zero-share buyShort throws the access error if shorting is locked, and is a
+        // harmless no-op if it's allowed -- so it's a side-effect-free capability test.
+        if (canShort === undefined) {
+            canShort = false;
+            try { ns.stock.buyShort(symbols[0], 0); canShort = true; } catch (e) { canShort = false; }
+            if (!canShort) ns.tprint("trader: shorting unavailable here (need BitNode-8 or Source-File 8 Level 2) -- running LONG-ONLY.");
+        }
 
         // ---- 4S purchase: gate on NET WORTH, then liquidate into cash to afford it ----
         let use4S = false;
@@ -153,8 +169,8 @@ export async function main(ns) {
                 // EV rank = |2f-1| * volatility  (proportional to expected log-growth per tick).
                 // NOTE: no volatility ceiling -- with a true forecast, high vol AMPLIFIES the edge.
                 const vol = ns.stock.getVolatility(s);
-                if (f >= BUY_LONG)      cands.push({ s, dir: "long",  conv: (2 * f - 1) * vol });
-                else if (f <= GO_SHORT) cands.push({ s, dir: "short", conv: (1 - 2 * f) * vol });
+                if (f >= BUY_LONG)                 cands.push({ s, dir: "long",  conv: (2 * f - 1) * vol });
+                else if (canShort && f <= GO_SHORT) cands.push({ s, dir: "short", conv: (1 - 2 * f) * vol });
             } else {
                 // EMA mode: no getVolatility (needs 4S) and the forecast is a noisy estimate,
                 // so demand real conviction and stay long-only.
@@ -184,7 +200,7 @@ export async function main(ns) {
             budget -= shares * price + COMMISSION;
         }
 
-        report(ns, statusLine(ns, symbols, use4S, netWorth));
+        report(ns, statusLine(ns, symbols, use4S, canShort, netWorth));
 
         // sleep to the next price tick (v3), with a fallback for older APIs
         if (typeof ns.stock.nextUpdate === "function") await ns.stock.nextUpdate();
@@ -203,14 +219,14 @@ function worth(ns, symbols) {
     return w;
 }
 
-function statusLine(ns, symbols, use4S, netWorth) {
+function statusLine(ns, symbols, use4S, canShort, netWorth) {
     let longs = 0, shorts = 0, warming = 0;
     for (const s of symbols) {
         const pos = ns.stock.getPosition(s);
         if (pos[0] > 0) longs++;
         if (pos[2] > 0) shorts++;
     }
-    const mode = use4S ? "4S long+short" : "EMA long-only";
+    const mode = use4S ? (canShort ? "4S long+short" : "4S long-only") : "EMA long-only";
     return "trader [" + mode + "]  net $" + fmt(netWorth) + "  cash $" + fmt(ns.getPlayer().money)
         + "  positions " + longs + "L/" + shorts + "S";
 }
