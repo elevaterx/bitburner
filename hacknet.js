@@ -16,6 +16,14 @@
  *  flags: noroi (cheapest-first) | nohome (don't buy home RAM) | nolaunch (don't auto-start stack)
  *         hoard (sell hashes to cash but buy NOTHING -- pile up liquid money, e.g. for a donation round)
  *
+ *  LIVE HOARD TOGGLE: hoarding is ALSO on whenever a file named "hoard.txt" exists on home. It's
+ *  re-read every loop, so it takes effect on EVERY running instance (a stale/duplicate copy, or the
+ *  argless launch boot.js does) without a restart -- create it to hoard, delete it to resume:
+ *      nano hoard.txt   (type anything, save)  ->  hoarding on within one loop
+ *      rm hoard.txt                            ->  upgrades resume
+ *  This is deliberate: the launch-time "hoard" arg only affects the ONE instance you start with it,
+ *  so an un-killed older instance keeps spending; the flag file stops them all.
+ *
  *  Tunables at top: CASH_RESERVE, CASH_FRACTION, CACHE_AT, HOME_TARGET, STACK, LOOP_MS.
  *  Verify RAM with `mem hacknet.js`. Must be in pull.js to deploy.
  *
@@ -48,7 +56,7 @@ export async function main(ns) {
     // Home-RAM + launch use eval-dodged singularity / ns.run so they add ~no static RAM.
     const AUTO_HOME   = !ns.args.includes("nohome");    // buy home RAM to fit the stack (default on)
     const AUTO_LAUNCH = !ns.args.includes("nolaunch");  // launch trader/hud1/sing as RAM allows (default on)
-    const HOARD       = ns.args.includes("hoard");      // sell hashes to cash but buy NOTHING -- just pile up money
+    const HOARD_ARG   = ns.args.includes("hoard");      // launch-time hoard (also honored live via hoard.txt, re-read each loop)
     const HOME_TARGET = 256;   // GB: stop buying home RAM here (fits the full stack + headroom)
     const STACK = ["hud1.js"];  // ONLY hud1 auto-launches (no cash cost). sing.js and trader.js are
     // deliberately NOT here: hacknet relaunching them fought casino/trader/donation phases repeatedly.
@@ -67,6 +75,12 @@ export async function main(ns) {
         const lines = [];
         const log = (s) => lines.push(s);
         const cash = ns.getPlayer().money;
+        // LIVE hoard toggle, re-read EVERY loop: on if launched with "hoard" OR if hoard.txt exists on
+        // home. Being per-loop, it halts spending on every running instance -- including an old/duplicate
+        // copy you forgot to kill, or the argless boot.js launch -- with no restart needed.
+        let hoardFlag = false;
+        try { hoardFlag = ns.fileExists("hoard.txt", "home"); } catch (e) {}
+        const HOARD = HOARD_ARG || hoardFlag;
         // reserve the next home-RAM upgrade cost so the hacknet greedy doesn't starve it (RAM-aware)
         let homeReserve = 0;
         if (AUTO_HOME && !HOARD) { try { if (ns.getServerMaxRam("home") < HOME_TARGET) homeReserve = ns.singularity.getUpgradeHomeRamCost(); } catch (e) {} }
@@ -81,7 +95,7 @@ export async function main(ns) {
         let hashes = 0, hcap = 0;
         try { hashes = ns.hacknet.numHashes(); hcap = ns.hacknet.hashCapacity(); } catch (e) {}
         const hnRate = loopSale / (LOOP_MS / 1000);   // realized $/s from hash sales this loop
-        log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + " h/s  $" + fmt(hnRate) + "/s  " + (HOARD ? "HOARDING (no spend)" : "budget $" + fmt(remaining)) + " ===");
+        log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + " h/s  $" + fmt(hnRate) + "/s  " + (HOARD ? ("HOARDING [" + (hoardFlag ? "hoard.txt" : "arg") + "] no spend") : "budget $" + fmt(remaining)) + " ===");
         if (hcap > 0) log("  hashes " + fmt(hashes) + "/" + fmt(hcap) + "  selling: " + HASH_SPEND);
 
         // --- RAM-aware: buy the reserved home upgrade once cash covers it (real singularity call) ---
