@@ -39,6 +39,7 @@ export async function main(ns) {
     "bprep.js", "bdiag.js", "bbatch.js",
     "killfarm.js", "bbatch2.js", "xpw.js", "trader.js", "casino.js", "augbuy.js", "update-pull.js",
     // --- late-game capability managers + shared libs (relative-import, node-testable lib/) ---
+    "update.js",
     "gang.js", "sleeves.js", "bladeburner.js", "corp.js", "go.js",
     "lib/fmt.js", "lib/net.js", "lib/caps.js",
     "lib/gang-logic.js", "lib/sleeve-logic.js", "lib/bladeburner-logic.js", "lib/corp-logic.js", "lib/go-logic.js"
