@@ -131,7 +131,7 @@ export async function main(ns) {
     //         isn't available in this node), so launching unconditionally is safe -- and they earn
     //         independently of the hacking farm, so we run them even in a dead-hack node. Guarded
     //         so a re-boot never double-launches. ----
-    for (const f of ["gang.js", "sleeves.js", "bladeburner.js", "corp.js"]) {
+    for (const f of ["gang.js", "sleeves.js", "bladeburner.js", "corp.js", "panel.js"]) {
         let up = false;
         for (const p of ns.ps("home")) if (p.filename === f) { up = true; break; }
         if (up) { log(f + " already running -- left as-is"); continue; }

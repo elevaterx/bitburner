@@ -9,6 +9,7 @@
  *  usage:  run go.js [--size 9] [--opponent "Netburners"] [--no-cycle] [--quiet]
  *  @param {NS} ns */
 import { chooseMove } from "./lib/go-logic.js";
+import { writeStatus } from "./lib/modules.js";
 
 const OPPONENTS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"];
 
@@ -33,6 +34,7 @@ export async function main(ns) {
     const opponent = flags.opponent && flags["no-cycle"] ? String(flags.opponent) : OPPONENTS[oppIdx % OPPONENTS.length];
     try { ns.go.resetBoardState(opponent, size); } catch (e) { /* opponent may be locked */ }
     vlog("new game vs " + opponent + " (" + size + "x" + size + ")");
+    writeStatus(ns, "go", { line: "playing " + opponent });
 
     let moves = 0;
     while (true) {
@@ -54,6 +56,7 @@ export async function main(ns) {
 
     const gs = ns.go.getGameState();
     vlog("game over vs " + opponent + " -- you " + gs.blackScore + " : " + gs.whiteScore + " opp");
+    writeStatus(ns, "go", { line: "vs " + opponent + "  " + gs.blackScore + ":" + gs.whiteScore });
     if (!flags["no-cycle"]) oppIdx++;
     await ns.sleep(500);
   }

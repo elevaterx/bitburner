@@ -15,7 +15,8 @@
  *  usage:  run gang.js [--once] [--equip-frac 0.1] [--train-until 200] [--ascend 1.5] [--no-warfare]
  *  @param {NS} ns */
 import { getCapabilities } from "./lib/caps.js";
-import { money as fmtMoney } from "./lib/fmt.js";
+import { money as fmtMoney, num as fmtNum } from "./lib/fmt.js";
+import { writeStatus } from "./lib/modules.js";
 import {
   GANG_FACTIONS, GANG_KARMA_REQ, DEFAULT_GANG_CFG,
   selectTaskNames, gangObjective, needsWantedControl, chooseTask,
@@ -51,6 +52,7 @@ export async function main(ns) {
     if (!ns.gang.inGang()) {
       const formed = await tryFormGang(ns, caps, log, () => { blockedNotified = true; }, blockedNotified);
       if (!formed) {
+        writeStatus(ns, "gang", { line: "forming - karma/faction" });
         if (flags.once) return;
         await ns.sleep(10_000);
         continue;
@@ -124,6 +126,7 @@ function manageGang(ns, cfg, flags, vlog) {
   const members = g.getMemberNames();
   const taskNames = selectTaskNames(g.getTaskNames().map((n) => g.getTaskStats(n)), isHacking);
   const objective = gangObjective(gang, members.length, cfg);
+  writeStatus(ns, "gang", { line: members.length + "/12  resp " + fmtNum(gang.respect) + "  " + objective + (gang.territoryWarfareEngaged ? "  war" : "") });
 
   // Designate one wanted-reducer (the biggest wanted contributor) when the penalty bites.
   let reducer = null;

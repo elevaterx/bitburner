@@ -10,6 +10,7 @@
  *  usage:  run corp.js [--once] [--no-selffund] [--no-products] [--office 3] [--quiet]
  *  @param {NS} ns */
 import { getCapabilities } from "./lib/caps.js";
+import { writeStatus } from "./lib/modules.js";
 import { money as fmtMoney } from "./lib/fmt.js";
 import {
   CORP_CITIES, UPGRADE_PRIORITY, DEFAULT_CORP_CFG,
@@ -50,6 +51,7 @@ export async function main(ns) {
     if (!ns.corporation.hasCorporation()) {
       if (!ns.corporation.createCorporation(cfg.corpName, !flags["no-selffund"])) {
         if (!blocked) { log("Can't create a corporation (need BN3, or $150b to self-fund outside it). Idling."); blocked = true; }
+        writeStatus(ns, "corp", { line: "no corp (need BN3 / $150b)" });
         if (flags.once) return;
         await ns.sleep(10_000);
         continue;
@@ -92,6 +94,9 @@ function ensureAll(ns, cfg, flags, vlog, safe) {
   ensureUpgrades(ns, cfg, vlog, safe);
   ensureAdVert(ns, cfg, AGRI, vlog, safe);
   ensureInvestment(ns, cfg, vlog, safe);
+
+  const info = c.getCorporation();
+  writeStatus(ns, "corp", { line: fmtMoney(info.funds) + "  rev " + fmtMoney(info.revenue) + "/s  div " + info.divisions.length });
 }
 
 function ensureDivision(ns, name, industry, vlog) {

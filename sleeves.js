@@ -10,6 +10,7 @@
  *  usage:  run sleeves.js [--once] [--crime Homicide] [--max-shock 0] [--aug-frac 0] [--aug-reserve 0]
  *  @param {NS} ns */
 import { getCapabilities } from "./lib/caps.js";
+import { writeStatus } from "./lib/modules.js";
 import { money as fmtMoney } from "./lib/fmt.js";
 import { DEFAULT_SLEEVE_CFG, chooseSleeveAction, actionMatchesTask, affordableSleeveAugs } from "./lib/sleeve-logic.js";
 
@@ -43,12 +44,14 @@ export async function main(ns) {
   while (true) {
     if (Number(flags["aug-frac"]) > 0) buyAugs(ns, Number(flags["aug-frac"]), Number(flags["aug-reserve"]), vlog);
 
+    const tally = { sync: 0, shock: 0, crime: 0 };
     for (let i = 0; i < n; i++) {
       const s = ns.sleeve.getSleeve(i);
       const action = chooseSleeveAction(s, cfg);
-      if (actionMatchesTask(action, ns.sleeve.getTask(i))) continue;   // already doing it -> don't reset progress
-      applyAction(ns, i, action, vlog);
+      tally[action.type] = (tally[action.type] || 0) + 1;
+      if (!actionMatchesTask(action, ns.sleeve.getTask(i))) applyAction(ns, i, action, vlog);
     }
+    writeStatus(ns, "sleeves", { line: n + " sleeves  sync " + tally.sync + " shock " + tally.shock + " crime " + tally.crime });
 
     if (flags.once) return;
     await ns.sleep(6000);

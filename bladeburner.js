@@ -12,6 +12,7 @@
  *  usage:  run bladeburner.js [--once] [--stamina-floor 0.5] [--chaos-ceiling 50] [--success-floor 0.8]
  *  @param {NS} ns */
 import { getCapabilities } from "./lib/caps.js";
+import { writeStatus } from "./lib/modules.js";
 import { DEFAULT_BB_CFG, chooseAction, largestAffordableBatch } from "./lib/bladeburner-logic.js";
 
 const GYM = "Powerhouse Gym";
@@ -120,6 +121,7 @@ function manage(ns, cfg, vlog) {
     if (bb.startAction(action.type, action.name)) vlog("action -> " + action.type + ":" + action.name);
   }
 
+  writeStatus(ns, "bladeburner", { line: "rank " + Math.round(state.rank) + "  stam " + Math.round(state.staminaPct * 100) + "%  " + action.name });
   spendSkillPoints(ns, vlog);
 }
 
