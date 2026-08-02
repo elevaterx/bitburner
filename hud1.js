@@ -546,6 +546,27 @@ export async function main(ns) {
                 for (const f of infos) lines.push("  " + f.msg);
             }
         }
+        // --- capability modules (written by panel.js each loop) ---
+        lines.push("");
+        let panelRead = null;
+        try {
+            const raw = ns.read("panel-data.txt");
+            if (raw && raw.length > 0) panelRead = JSON.parse(raw);
+        } catch (e) {}
+        if (!panelRead) {
+            lines.push("MODULES: (no panel-data.txt -- panel.js not running)");
+        } else {
+            const page = Date.now() - (panelRead.ts || 0);
+            if (page > 15000) {
+                lines.push("MODULES: stale by " + Math.floor(page / 1000) + "s (panel not running)");
+            } else {
+                lines.push("MODULES (BN" + panelRead.node + ", " + (panelRead.auto ? "auto" : "manual") + "):");
+                for (const m of (panelRead.modules || [])) {
+                    lines.push("  " + (m.running ? "[on] " : "[off] ") + String(m.label).padEnd(12) +
+                        (m.status || "-") + "  " + (m.cost ? m.cost.toFixed(1) + "GB" : "?") + (m.fits ? "" : " (too big)"));
+                }
+            }
+        }
         statusText = lines.join("\n");
 
         // --- render ---
