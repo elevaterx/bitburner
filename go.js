@@ -30,6 +30,17 @@ export async function main(ns) {
   const log = (m) => ns.tprint("[go] " + m);
   const vlog = (m) => { if (!flags.quiet) ns.print("[go] " + m); };
 
+  // Engine tuning (iters/budget) lives in a control file so it SURVIVES opponent-pin relaunches from
+  // the panel (those carry only --opponent args). Precedence: defaults <- go-ctl.txt <- explicit CLI.
+  // An explicit --iters/--budget is written back; edit go-ctl.txt (nano) to retune live between games.
+  const CTL = "go-ctl.txt";
+  const readCtl = () => { try { const o = JSON.parse(ns.read(CTL) || "{}"); return o && typeof o === "object" ? o : {}; } catch (e) { return {}; } };
+  { const cli = {};
+    if (ns.args.includes("--iters")) cli.iters = Number(flags.iters);
+    if (ns.args.includes("--budget")) cli.budget = Number(flags.budget);
+    const merged = { iters: 400, budget: 600, ...readCtl(), ...cli };
+    ns.write(CTL, JSON.stringify({ iters: merged.iters, budget: merged.budget }), "w"); }
+
   if (!ns.go || typeof ns.go.getBoardState !== "function") { log("IPvGO API unavailable. Exiting."); return; }
 
   let oppIdx = 0;
@@ -41,12 +52,13 @@ export async function main(ns) {
     vlog("new game vs " + opponent + " (" + size + "x" + size + ")");
     writeStatus(ns, "go", { line: "playing " + opponent + goRecord(ns, opponent) });
     let komi = 5.5; try { komi = ns.go.getGameState().komi; } catch (e) {}   // white's bonus, per opponent
+    const cfg = { iters: 400, budget: 600, ...readCtl() };   // live engine tuning, re-read each game
 
     let moves = 0;
     while (true) {
       const board = ns.go.getBoardState();
       const valid = ns.go.analysis.getValidMoves();
-      let move = mctsMove(board, { komi, iterations: Number(flags.iters), rng: Math.random, now: () => Date.now(), deadline: Date.now() + Number(flags.budget) });
+      let move = mctsMove(board, { komi, iterations: Number(cfg.iters), rng: Math.random, now: () => Date.now(), deadline: Date.now() + Number(cfg.budget) });
       if (move && !(valid[move.x] && valid[move.x][move.y])) move = chooseMove(board, valid);   // rare superko: fall back to the heuristic
 
       let res;
