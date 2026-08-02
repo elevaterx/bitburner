@@ -57,29 +57,39 @@ export async function main(ns) {
     const homeFree = homeMax - ns.getServerUsedRam("home");
     const now = Date.now();
 
+    // Robust running-detection: ns.ps() lists every process WITH its args. getRunningScript(file,host)
+    // only matches NO-ARG launches, so it misses arg-launched daemons and (worse) would let the panel
+    // auto-launch a duplicate of a module it had relaunched with a mode flag.
+    const procByFile = new Map();
+    for (const p of ns.ps("home")) if (!procByFile.has(p.filename)) procByFile.set(p.filename, p);
+    const rsInfo = (proc) => { const rs = ns.getRunningScript(proc.pid); return { up: rs ? rs.onlineRunningTime : 0, ram: rs ? rs.ramUsage * rs.threads : 0 }; };
+
     // --- capability modules ---
     const modRows = mods.map((m) => {
-      const rs = ns.getRunningScript(m.file, "home");
+      const proc = procByFile.get(m.file);
+      const running = !!proc;
       const exists = ns.fileExists(m.file, "home");
       const cost = exists ? ns.getScriptRam(m.file, "home") : 0;
       const fits = cost > 0 && cost <= homeFree;
       const on = enabled.has(m.key);
       const status = exists ? formatStatus(readStatus(ns, m.key), now) : "missing";
-      if (!flags["no-auto"] && on && exists && !rs && fits) ns.run(m.file);
+      if (!flags["no-auto"] && on && exists && !running && fits) ns.run(m.file);
       return {
-        kind: "module", key: m.key, file: m.file, label: m.label, running: !!rs, cost, fits, on, status,
-        mode: modeData(ns, m.file, !!rs, rs ? rs.args : []),
+        kind: "module", key: m.key, file: m.file, label: m.label, running, cost, fits, on, status,
+        mode: modeData(ns, m.file, running, proc ? proc.args : []),
       };
     });
 
-    // --- background workers (running only) ---
+    // --- background workers: running ones, PLUS stopped ones that have modes (so you can pre-arm a
+    //     mode -- e.g. flip hacknet to Hoard -- and start them without a surprise spend) ---
     const workerRows = [];
     for (const j of WORKER_JOBS) {
-      const rs = ns.getRunningScript(j.file, "home");
-      if (!rs) continue;
+      const proc = procByFile.get(j.file);
+      if (!proc && !MODES[j.file]) continue;
+      const info = proc ? rsInfo(proc) : { up: 0, ram: 0 };
       workerRows.push({
-        kind: "worker", file: j.file, label: j.label, up: rs.onlineRunningTime, ram: rs.ramUsage * rs.threads,
-        mode: modeData(ns, j.file, true, rs.args),
+        kind: "worker", file: j.file, label: j.label, running: !!proc, up: info.up, ram: info.ram,
+        mode: modeData(ns, j.file, !!proc, proc ? proc.args : []),
       });
     }
 
@@ -168,12 +178,14 @@ function view(h, { modRows, workerRows, homeFree, homeMax, node, auto, pending }
     ? h("div", { style: { ...mono, color: "#9ad", marginTop: 6, marginBottom: 2 } }, "Workers (" + workerRows.length + ")")
     : null;
   const workerBody = workerRows.map((r) => {
-    const dot = h("span", { style: { color: "#6c6", width: 12 } }, "●");
-    const name = h("span", { style: { color: "#ddd", width: 84 } }, r.label);
-    const up = h("span", { style: { color: "#bbb", flex: 1, minWidth: 80 } }, "up " + fmtTime(r.up));
-    const ram = h("span", { style: { color: "#999", width: 84, textAlign: "right" } }, fmtRam(r.ram));
-    const stop = btn("Stop", () => pending.push({ type: "stop", file: r.file }), "#f88");
-    return rowWrap("w-" + r.file, [dot, name, up, ram, stop, ...(modeChips(r.mode) || [])]);
+    const dot = h("span", { style: { color: r.running ? "#6c6" : "#666", width: 12 } }, r.running ? "●" : "○");
+    const name = h("span", { style: { color: r.running ? "#ddd" : "#888", width: 84 } }, r.label);
+    const infoCell = h("span", { style: { color: "#bbb", flex: 1, minWidth: 80 } }, r.running ? "up " + fmtTime(r.up) : "stopped");
+    const ram = h("span", { style: { color: "#999", width: 84, textAlign: "right" } }, r.running ? fmtRam(r.ram) : "");
+    const ctl = r.running
+      ? btn("Stop", () => pending.push({ type: "stop", file: r.file }), "#f88")
+      : btn("Start", () => pending.push({ type: "start", file: r.file }), "#8f8");
+    return rowWrap("w-" + r.file, [dot, name, infoCell, ram, ctl, ...(modeChips(r.mode) || [])]);
   });
 
   const header = h("div", { style: { ...mono, color: "#9ad", marginBottom: 4 } },

@@ -15,6 +15,7 @@
  *    run update.js              discover + download everything; report new/changed files
  *    run update.js --dry        fetch the tree and list files (marking ones new to your machine); no writes
  *    run update.js --restart    after updating, kill managed scripts and relaunch boot.js so new code is live now
+ *    (bare forms work too: `run update.js restart` / `run update.js dry`)
  *
  *  First-time bootstrap (terminal):
  *    wget https://raw.githubusercontent.com/elevaterx/bitburner/main/update.js update.js
@@ -49,6 +50,9 @@ export function filterRepoFiles(treeEntries) {
 export async function main(ns) {
   ns.disableLog("ALL");
   const flags = ns.flags([["dry", false], ["restart", false]]);
+  // Accept bare positional forms too, so `run update.js restart` / `dry` work like the --flags.
+  const dry = flags.dry || ns.args.includes("dry");
+  const restart = flags.restart || ns.args.includes("restart");
   const say = (m) => ns.tprint("[update] " + m);
   const bust = () => "?nocache=" + Date.now();
 
@@ -72,7 +76,7 @@ export async function main(ns) {
   const base = `https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/`;
 
   // 2a. Dry run: just list, mark files not present locally. No downloads, no writes.
-  if (flags.dry) {
+  if (dry) {
     const fresh = files.filter((p) => !ns.fileExists(p, "home"));
     say(`[DRY] tree has ${files.length} file(s); ${fresh.length} not present locally:` + listOf(fresh.length ? fresh : ["(all already present)"]));
     say("dry run -- nothing written. Run without --dry to download.");
@@ -102,7 +106,7 @@ export async function main(ns) {
   if (selfChanged) say("update.js updated itself -- the new version runs next time you `run update.js` (this run finished on the old copy; expected).");
 
   // 4. Optional restart so the new code is live immediately.
-  if (flags.restart) {
+  if (restart) {
     say("restarting stack: killing managed scripts, then boot.js ...");
     for (const h of bfs(ns)) for (const p of ns.ps(h)) if (!(h === "home" && p.filename === me)) ns.kill(p.pid);
     await ns.sleep(400);
