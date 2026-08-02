@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MODULES, relevantModules, parseStatus, formatStatus, statusPath } from "../lib/modules.js";
+import { MODULES, WORKER_JOBS, MODES, relevantModules, parseStatus, formatStatus, statusPath, argsEqual, activeRelaunchMode } from "../lib/modules.js";
 
 test("MODULES: covers the five capability modules", () => {
   assert.deepEqual(MODULES.map((m) => m.key).sort(), ["bladeburner", "corp", "gang", "go", "sleeves"]);
@@ -23,6 +23,37 @@ test("parseStatus: tolerant", () => {
   assert.equal(parseStatus(""), null);
   assert.equal(parseStatus("not json"), null);
   assert.deepEqual(parseStatus('{"line":"3m"}'), { line: "3m" });
+});
+
+test("WORKER_JOBS: well-formed", () => {
+  assert.ok(WORKER_JOBS.length >= 1);
+  for (const j of WORKER_JOBS) { assert.ok(j.file.endsWith(".js")); assert.ok(j.label); }
+});
+
+test("argsEqual: string-wise, order-sensitive", () => {
+  assert.equal(argsEqual([], []), true);
+  assert.equal(argsEqual(["income"], ["income"]), true);
+  assert.equal(argsEqual(["1000"], [1000]), true);           // number vs string
+  assert.equal(argsEqual(["--aug-frac", "0.01"], ["--aug-frac", "0.01"]), true);
+  assert.equal(argsEqual(["a"], ["a", "b"]), false);
+  assert.equal(argsEqual(["a", "b"], ["b", "a"]), false);
+});
+
+test("activeRelaunchMode: matches running args to a mode", () => {
+  const opts = MODES["coordinator.js"].options;
+  assert.equal(activeRelaunchMode(opts, ["repgrind"]), 2);
+  assert.equal(activeRelaunchMode(opts, ["income"]), 0);
+  assert.equal(activeRelaunchMode(opts, ["nonsense"]), -1);
+  const gang = MODES["gang.js"].options;
+  assert.equal(activeRelaunchMode(gang, []), 0);              // default = Warfare (no args)
+  assert.equal(activeRelaunchMode(gang, ["--no-warfare"]), 1);
+});
+
+test("MODES: hacknet is a write-control (paused/payback/budget)", () => {
+  assert.equal(MODES["hacknet.js"].type, "write");
+  assert.equal(MODES["hacknet.js"].file, "hacknet-ctl.txt");
+  const labels = MODES["hacknet.js"].options.map((o) => o.label);
+  assert.ok(labels.includes("Pause") && labels.includes("Payback"));
 });
 
 test("formatStatus: line + staleness", () => {

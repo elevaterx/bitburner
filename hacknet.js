@@ -14,23 +14,31 @@
  *
  *  args:  [hashSpend] -- hash upgrade to buy (default "Sell for Money")
  *  flags: noroi (cheapest-first) | nohome (don't buy home RAM) | nolaunch (don't auto-start stack)
- *         hoard (sell hashes to cash but buy NOTHING -- pile up liquid money, e.g. for a donation round)
  *
- *  LIVE HOARD TOGGLE: hoarding is ALSO on whenever a file named "hoard.txt" exists on home. It's
- *  re-read every loop, so it takes effect on EVERY running instance (a stale/duplicate copy, or the
- *  argless launch boot.js does) without a restart -- create it to hoard, delete it to resume:
- *      nano hoard.txt   (type anything, save)  ->  hoarding on within one loop
- *      rm hoard.txt                            ->  upgrades resume
- *  This is deliberate: the launch-time "hoard" arg only affects the ONE instance you start with it,
- *  so an un-killed older instance keeps spending; the flag file stops them all.
+ *  SPEND CONTROL (fail-safe by design). hacknet ALWAYS starts PAUSED -- it resets the control file to
+ *  "paused" on launch, so a boot/relaunch can never spend your cash. It sells hashes for money the
+ *  whole time; spending on upgrades is opt-in, re-read live every loop from `hacknet-ctl.txt`:
+ *      paused        -> buy nothing (default; absent or unrecognised file = paused)
+ *      payback       -> buy an upgrade only if it pays for itself (from extra hash income) within
+ *                       MAX_PAYBACK seconds. CONVERGES: once nodes are strong it stops on its own,
+ *                       so cash accumulates untouched -- it can't drain your treasury.
+ *      budget:<$N>   -> spend up to $N total (best ROI first), IGNORING payback -- grow beyond the
+ *                       payback line, or clamp below it. Decrements as it spends; exhausts -> paused.
+ *  Set it from the panel (Pause | Payback | Budget) or by hand: `nano hacknet-ctl.txt` -> type e.g.
+ *  `payback` or `budget:500e9`, save. CASH_RESERVE is a hard floor under everything.
  *
- *  Tunables at top: CASH_RESERVE, CASH_FRACTION, CACHE_AT, HOME_TARGET, STACK, LOOP_MS.
+ *  Tunables at top: CASH_RESERVE, MAX_PAYBACK, CACHE_AT, HOME_TARGET, STACK, LOOP_MS.
  *  Verify RAM with `mem hacknet.js`. Must be in pull.js to deploy.
  *
  *  @param {NS} ns */
+import { parseCtl, ctlToStr, paybackOk, spendCeiling, hashDollarValue } from "./lib/hacknet-budget.js";
+
 export async function main(ns) {
-    const CASH_RESERVE  = 1_000_000;   // floor under which we don't spend
-    const CASH_FRACTION = 0.5;         // spend up to this fraction of (cash - reserve) per loop
+    const CASH_RESERVE  = 1_000_000;   // hard floor: never spend below this
+    const MAX_PAYBACK   = 3600;        // payback mode: buy an upgrade only if it pays for itself (from
+                                       // extra hash income) within this many seconds. Raise to reinvest
+                                       // harder; lower to take only the very cheapest wins.
+    const CTL_FILE      = "hacknet-ctl.txt";  // spend control: paused | payback | budget:$N. Absent = paused.
     const FLAGS = ["noroi", "nohome", "nolaunch", "hoard", "roi"];
     const HASH_SPEND = ns.args.find((a) => typeof a === "string" && !FLAGS.includes(a)) || "Sell for Money";  // first non-flag arg
     const CACHE_AT      = 0.85;        // buy cache when hashes exceed this frac of capacity
@@ -56,7 +64,9 @@ export async function main(ns) {
     // Home-RAM + launch use eval-dodged singularity / ns.run so they add ~no static RAM.
     const AUTO_HOME   = !ns.args.includes("nohome");    // buy home RAM to fit the stack (default on)
     const AUTO_LAUNCH = !ns.args.includes("nolaunch");  // launch trader/hud1/sing as RAM allows (default on)
-    const HOARD_ARG   = ns.args.includes("hoard");      // launch-time hoard (also honored live via hoard.txt, re-read each loop)
+    // Launch ALWAYS starts paused (fail-safe): reset the control so a boot can NEVER spend. Activate
+    // spending afterwards from the panel (Pause | Payback | Budget) or `nano hacknet-ctl.txt`.
+    ns.write(CTL_FILE, "paused", "w");
     const HOME_TARGET = 256;   // GB: stop buying home RAM here (fits the full stack + headroom)
     const STACK = ["hud1.js"];  // ONLY hud1 auto-launches (no cash cost). sing.js and trader.js are
     // deliberately NOT here: hacknet relaunching them fought casino/trader/donation phases repeatedly.
@@ -75,16 +85,19 @@ export async function main(ns) {
         const lines = [];
         const log = (s) => lines.push(s);
         const cash = ns.getPlayer().money;
-        // LIVE hoard toggle, re-read EVERY loop: on if launched with "hoard" OR if hoard.txt exists on
-        // home. Being per-loop, it halts spending on every running instance -- including an old/duplicate
-        // copy you forgot to kill, or the argless boot.js launch -- with no restart needed.
-        let hoardFlag = false;
-        try { hoardFlag = ns.fileExists("hoard.txt", "home"); } catch (e) {}
-        const HOARD = HOARD_ARG || hoardFlag;
-        // reserve the next home-RAM upgrade cost so the hacknet greedy doesn't starve it (RAM-aware)
+        // Fail-safe spend control, re-read EVERY loop. Default (absent/garbage) = PAUSED. Forms:
+        // "paused" | "payback" | "budget:<$>" -- set by the panel or `nano hacknet-ctl.txt`.
+        const ctl = parseCtl(ns.read(CTL_FILE));
+        const paused = ctl.mode === "paused";
+        const payMode = ctl.mode === "payback";
+        // $-value of one hash (for payback math), from the live "Sell for Money" hash cost.
+        let hashVal = 0;
+        try { hashVal = hashDollarValue(ns.hacknet.hashCost("Sell for Money")); } catch (e) {}
+        // reserve the next home-RAM upgrade cost only when we're allowed to spend (RAM-aware)
         let homeReserve = 0;
-        if (AUTO_HOME && !HOARD) { try { if (ns.getServerMaxRam("home") < HOME_TARGET) homeReserve = ns.singularity.getUpgradeHomeRamCost(); } catch (e) {} }
-        let remaining = HOARD ? 0 : Math.max(0, (cash - CASH_RESERVE - homeReserve) * CASH_FRACTION);
+        if (AUTO_HOME && !paused) { try { if (ns.getServerMaxRam("home") < HOME_TARGET) homeReserve = ns.singularity.getUpgradeHomeRamCost(); } catch (e) {} }
+        let remaining = spendCeiling(ctl.mode, ctl.budget, cash, CASH_RESERVE + homeReserve);
+        const ceil0 = remaining;   // starting ceiling, for budget accounting
 
         // current production rate, for display
         let prod = 0;
@@ -95,7 +108,10 @@ export async function main(ns) {
         let hashes = 0, hcap = 0;
         try { hashes = ns.hacknet.numHashes(); hcap = ns.hacknet.hashCapacity(); } catch (e) {}
         const hnRate = loopSale / (LOOP_MS / 1000);   // realized $/s from hash sales this loop
-        log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + " h/s  $" + fmt(hnRate) + "/s  " + (HOARD ? ("HOARDING [" + (hoardFlag ? "hoard.txt" : "arg") + "] no spend") : "budget $" + fmt(remaining)) + " ===");
+        const modeStr = paused ? "PAUSED (no spend)"
+            : ctl.mode === "budget" ? ("BUDGET $" + fmt(ctl.budget) + " left")
+            : ("PAYBACK<=" + MAX_PAYBACK + "s  cap $" + fmt(remaining));
+        log("=== hacknet  nodes " + n0 + "/" + MAX_NODES + "  prod " + fmt(prod) + " h/s  $" + fmt(hnRate) + "/s  " + modeStr + " ===");
         if (hcap > 0) log("  hashes " + fmt(hashes) + "/" + fmt(hcap) + "  selling: " + HASH_SPEND);
 
         // --- RAM-aware: buy the reserved home upgrade once cash covers it (real singularity call) ---
@@ -111,7 +127,7 @@ export async function main(ns) {
         // --- RAM-aware: launch stack scripts as home RAM allows (income, eyes, endgame) ---
         // hud1 costs no cash so it comes up as soon as it fits; trader and sing SPEND player cash
         // and would starve the home-RAM saving into a deadlock, so we hold them until home is maxed.
-        if (AUTO_LAUNCH && !HOARD) {
+        if (AUTO_LAUNCH) {
             try {
                 const homeAtTarget = ns.getServerMaxRam("home") >= HOME_TARGET;
                 const running = new Set(ns.ps("home").map((p) => p.filename));
@@ -149,6 +165,9 @@ export async function main(ns) {
             let best = null, bestScore = -1;
             const consider = (cand) => {
                 if (!Number.isFinite(cand.cost) || cand.cost > remaining) return;
+                // payback mode: only buy if it pays for itself within MAX_PAYBACK (needs the Formulas
+                // gain). budget mode ignores payback -- you asked for that upgrade explicitly.
+                if (payMode && (!useF || !paybackOk(cand.cost, cand.gain, hashVal, MAX_PAYBACK))) return;
                 const score = useF ? cand.gain / cand.cost : 1 / cand.cost;   // ROI, or cheapest-first
                 if (score > bestScore) { bestScore = score; best = cand; }
             };
@@ -190,8 +209,13 @@ export async function main(ns) {
 
         if (upgrades > 0) {
             log("  bought " + upgrades + " upgrade(s)  spent $" + fmt(spent));
-        } else {
-            log("  no affordable upgrades this loop");
+        } else if (!paused) {
+            log("  no upgrade cleared the bar this loop");
+        }
+        // budget accounting: decrement the pool by what we actually spent (incl. cache); exhaust -> paused.
+        if (ctl.mode === "budget") {
+            const left = Math.max(0, ctl.budget - (ceil0 - remaining));
+            ns.write(CTL_FILE, left > 0 ? ctlToStr({ mode: "budget", budget: left }) : "paused", "w");
         }
 
         ns.clearLog();

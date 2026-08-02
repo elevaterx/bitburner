@@ -50,6 +50,7 @@ export async function main(ns) {
       else if (a.type === "disable") { enabled.delete(a.key); dirty = true; }
       else if (a.type === "relaunch") { ns.scriptKill(a.file, "home"); ns.run(a.file, 1, ...a.args); }
       else if (a.type === "file") { if (a.on) ns.write(a.file, "1", "w"); else if (ns.fileExists(a.file, "home")) ns.rm(a.file, "home"); }
+      else if (a.type === "write") ns.write(a.file, a.content, "w");
     }
     if (dirty) writeEnabled(ns, enabled);
 
@@ -115,6 +116,10 @@ function modeData(ns, file, running, args) {
     const active = running ? activeRelaunchMode(spec.options, args) : -1;
     return { type: "relaunch", file, options: spec.options.map((o, i) => ({ label: o.label, args: o.args, active: i === active })) };
   }
+  if (spec.type === "write") {
+    const cur = String(ns.read(spec.file) || "").trim();
+    return { type: "write", file: spec.file, options: spec.options.map((o) => ({ label: o.label, content: o.content, active: cur === o.content })) };
+  }
   // file toggle
   const present = ns.fileExists(spec.file, "home");
   return { type: "file", controlFile: spec.file, options: spec.options.map((o) => ({ label: o.label, on: o.on, active: o.on === present })) };
@@ -146,11 +151,11 @@ function view(h, { modRows, workerRows, homeFree, homeMax, node, auto, pending }
   // mode chips for a row (relaunch or file)
   const modeChips = (mode) => {
     if (!mode) return null;
-    return mode.options.map((o, i) => chip(
+    return mode.options.map((o) => chip(
       o.label, o.active,
-      mode.type === "relaunch"
-        ? () => pending.push({ type: "relaunch", file: mode.file, args: o.args })
-        : () => pending.push({ type: "file", file: mode.controlFile, on: o.on }),
+      mode.type === "relaunch" ? () => pending.push({ type: "relaunch", file: mode.file, args: o.args })
+      : mode.type === "write"  ? () => pending.push({ type: "write", file: mode.file, content: o.content })
+      : () => pending.push({ type: "file", file: mode.controlFile, on: o.on }),
     ));
   };
 

@@ -109,8 +109,10 @@ export async function main(ns) {
     } else {
         log("coordinator SKIPPED (hacking-for-money is dead here). arg[3]='farm' forces it (e.g. as an XP tap).");
         if (nodeNum === 9) {
+            // hacknet starts PAUSED by its own design (resets hacknet-ctl.txt to "paused" on launch),
+            // so a boot can never drain cash. Enable spending from the panel (Payback | Budget) when ready.
             pid = ns.run("hacknet.js");
-            log(pid ? "hacknet.js up -- BN9 hash economy (sells hashes for cash)" : "hacknet.js FAILED");
+            log(pid ? "hacknet.js up -- BN9 hash economy (starts PAUSED; enable spend from the panel)" : "hacknet.js FAILED");
             await ns.sleep(SETTLE_MS);
         } else {
             log("  income engine is manual here -- run the trader (stocks work via SF8).");
