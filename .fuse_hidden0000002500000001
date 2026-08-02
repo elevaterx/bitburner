@@ -63,7 +63,7 @@ export async function main(ns) {
     // auto-launch a duplicate of a module it had relaunched with a mode flag.
     const procByFile = new Map();
     for (const p of ns.ps("home")) if (!procByFile.has(p.filename)) procByFile.set(p.filename, p);
-    const rsInfo = (proc) => { const rs = ns.getRunningScript(proc.pid); return { up: rs ? rs.onlineRunningTime * 1000 : 0, ram: rs ? rs.ramUsage * rs.threads : 0 }; };
+    const rsInfo = (proc) => { const rs = ns.getRunningScript(proc.pid); return { up: rs ? rs.onlineRunningTime : 0, ram: rs ? rs.ramUsage * rs.threads : 0 }; };
 
     // --- capability modules ---
     const modRows = mods.map((m) => {
@@ -89,7 +89,7 @@ export async function main(ns) {
       if (!proc && !MODES[j.file]) continue;
       const info = proc ? rsInfo(proc) : { up: 0, ram: 0 };
       workerRows.push({
-        kind: "worker", file: j.file, label: j.label, running: !!proc, up: info.up, ram: info.ram, status: j.key ? formatStatus(readStatus(ns, j.key), now) : null,
+        kind: "worker", file: j.file, label: j.label, running: !!proc, up: info.up, ram: info.ram,
         mode: modeData(ns, j.file, !!proc, proc ? proc.args : []),
       });
     }
@@ -98,7 +98,7 @@ export async function main(ns) {
     ns.write("panel-data.txt", JSON.stringify({
       ts: now, node: caps.node, auto: !flags["no-auto"], homeFree, homeMax,
       modules: modRows.map((r) => ({ key: r.file, label: r.label, running: r.running, cost: r.cost, fits: r.fits, on: r.on, status: r.status })),
-      workers: workerRows.map((r) => ({ label: r.label, up: r.up, ram: r.ram, status: r.status })),
+      workers: workerRows.map((r) => ({ label: r.label, up: r.up, ram: r.ram })),
     }), "w");
 
     ns.clearLog();
@@ -185,7 +185,7 @@ function view(h, { modRows, workerRows, homeFree, homeMax, node, auto, pending }
   const workerBody = workerRows.map((r) => {
     const dot = h("span", { style: { color: r.running ? "#6c6" : "#666", width: 12 } }, r.running ? "●" : "○");
     const name = h("span", { style: { color: r.running ? "#ddd" : "#888", width: 84 } }, r.label);
-    const infoCell = h("span", { style: { color: "#bbb", flex: 1, minWidth: 80 } }, (r.running ? "up " + fmtTime(r.up) : "stopped") + (r.status ? "  " + r.status : ""));
+    const infoCell = h("span", { style: { color: "#bbb", flex: 1, minWidth: 80 } }, r.running ? "up " + fmtTime(r.up) : "stopped");
     const ram = h("span", { style: { color: "#999", width: 84, textAlign: "right" } }, r.running ? fmtRam(r.ram) : "");
     const ctl = r.running
       ? btn("Stop", () => pending.push({ type: "stop", file: r.file }), "#f88")

@@ -565,6 +565,13 @@ export async function main(ns) {
                     lines.push("  " + (m.running ? "[on] " : "[off] ") + String(m.label).padEnd(12) +
                         (m.status || "-") + "  " + (m.cost ? m.cost.toFixed(1) + "GB" : "?") + (m.fits ? "" : " (too big)"));
                 }
+                const _wk = panelRead.workers || [];
+                if (_wk.length) lines.push("WORKERS:");
+                for (const w of _wk) {
+                    const _us = Math.floor((w.up || 0) / 1000);
+                    const _up = !w.up ? "stopped" : (_us >= 3600 ? (Math.floor(_us / 3600) + "h" + String(Math.floor((_us % 3600) / 60)).padStart(2, "0")) : (Math.floor(_us / 60) + "m"));
+                    lines.push("  " + String(w.label).padEnd(12) + _up.padEnd(8) + (w.ram ? (w.ram.toFixed(1) + "GB  ") : "") + (w.status || ""));
+                }
             }
         }
         statusText = lines.join("\n");

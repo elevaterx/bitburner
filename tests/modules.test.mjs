@@ -25,9 +25,10 @@ test("parseStatus: tolerant", () => {
   assert.deepEqual(parseStatus('{"line":"3m"}'), { line: "3m" });
 });
 
-test("WORKER_JOBS: well-formed", () => {
+test("WORKER_JOBS: well-formed; hacknet carries a status key", () => {
   assert.ok(WORKER_JOBS.length >= 1);
-  for (const j of WORKER_JOBS) { assert.ok(j.file.endsWith(".js")); assert.ok(j.label); }
+  for (const j of WORKER_JOBS) { assert.ok(j.file.endsWith(".js")); assert.ok(j.label); if (j.key) assert.equal(typeof j.key, "string"); }
+  assert.equal(WORKER_JOBS.find((j) => j.file === "hacknet.js").key, "hacknet");
 });
 
 test("argsEqual: string-wise, order-sensitive", () => {

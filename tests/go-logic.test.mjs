@@ -1,17 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { neighbors, scoreMove, chooseMove } from "../lib/go-logic.js";
+import { neighbors, group, toGrid, simulateMove, isMyEye, evaluateMove, chooseMove } from "../lib/go-logic.js";
 
-// Board is board[x][y]. Build helpers from row-strings for readability, transposed to [x][y].
-function boardFrom(rows) {
-  const size = rows.length;
-  const b = [];
-  for (let x = 0; x < size; x++) { let s = ""; for (let y = 0; y < size; y++) s += rows[y][x]; b.push(s); }
-  return b;
-}
-// uniform liberties grid
-const libGrid = (size, val) => Array.from({ length: size }, () => Array.from({ length: size }, () => val));
-const validAllEmpty = (board) => board.map((col) => [...col].map((c) => c === "."));
+// Boards are given directly as column-strings (board[x] = column x, board[x][y] = char).
+const validEmpties = (b) => b.map((col) => [...col].map((c) => c === "."));
 
 test("neighbors: bounded", () => {
   assert.equal(neighbors(0, 0, 5).length, 2);
@@ -19,64 +11,48 @@ test("neighbors: bounded", () => {
   assert.equal(neighbors(4, 4, 5).length, 2);
 });
 
+test("group: counts liberties of a lone stone", () => {
+  const b = ["...", ".X.", "..."];
+  assert.equal(group(toGrid(b), 1, 1).libs, 4);
+});
+
+// O at (1,1) with a single liberty at (1,2); X there captures it.
+const capBoard = [".X.", "XO.", ".X."];
+
+test("simulateMove: captures an enemy chain in atari", () => {
+  const sim = simulateMove(capBoard, 1, 2);
+  assert.equal(sim.captured, 1);
+  assert.equal(sim.grid[1][1], ".");   // the O stone was removed
+});
+
+test("evaluateMove: capture outscores plain expansion", () => {
+  assert.ok(evaluateMove(capBoard, 1, 2) > evaluateMove(capBoard, 0, 0));
+});
+
 test("chooseMove: takes the capturing move", () => {
-  // 3x3. Opponent 'O' at (1,1) with exactly 1 liberty; playing that liberty captures.
-  const board = boardFrom([
-    "X.X",
-    "XOX",
-    "...",
-  ]);
-  const size = board.length;
-  // liberties: the O chain has 1 liberty. Mark liberties[1][1]=1 (the stone), others don't matter much.
-  const liberties = libGrid(size, -1);
-  liberties[1][1] = 1; // O at x=1,y=1 (see transpose) has 1 lib
-  // Find where O actually is and set neighbor scoring; ensure the empty point adjacent to it wins.
-  const valid = validAllEmpty(board);
-  const mv = chooseMove(board, valid, liberties);
-  assert.ok(mv, "should pick a move");
-  // The capturing empty point is the one orthogonally adjacent to the O stone.
-  // Locate O:
-  let ox = -1, oy = -1;
-  for (let x = 0; x < size; x++) for (let y = 0; y < size; y++) if (board[x][y] === "O") { ox = x; oy = y; }
-  const adjToO = neighbors(ox, oy, size).some(([nx, ny]) => nx === mv.x && ny === mv.y);
-  assert.ok(adjToO, "chosen move should be adjacent to the capturable O stone");
+  const mv = chooseMove(capBoard, validEmpties(capBoard));
+  assert.deepEqual(mv, { x: 1, y: 2 });
 });
 
-test("scoreMove: capture beats plain expansion", () => {
-  const board = boardFrom([
-    ".O.",
-    "...",
-    "...",
-  ]);
-  const size = board.length;
-  const liberties = libGrid(size, -1);
-  // find O
-  let ox, oy;
-  for (let x = 0; x < size; x++) for (let y = 0; y < size; y++) if (board[x][y] === "O") { ox = x; oy = y; }
-  liberties[ox][oy] = 1;
-  // a point adjacent to O:
-  const [cx, cy] = neighbors(ox, oy, size)[0];
-  const capScore = scoreMove(board, liberties, cx, cy);
-  // a far empty point (corner) not adjacent to O
-  const farScore = scoreMove(board, liberties, size - 1, size - 1);
-  assert.ok(capScore > farScore, "capturing move should outscore a plain expansion");
+test("evaluateMove: self-atari is penalised, expansion is not", () => {
+  const b = ["OO.", ".O.", "..."];        // (0,2) has one empty neighbour + one enemy -> self-atari
+  assert.ok(evaluateMove(b, 0, 2) < 0);
+  assert.ok(evaluateMove(b, 2, 2) > 0);    // open corner-ish expansion
 });
 
-test("chooseMove: passes when no legal moves", () => {
-  const board = boardFrom(["XX", "XX"]);
-  const valid = validAllEmpty(board); // all false (no empties)
-  assert.equal(chooseMove(board, valid, libGrid(2, -1)), null);
+test("isMyEye: true when surrounded by own stones, false otherwise", () => {
+  const eye = ["XXX", "X.X", "XXX"];
+  assert.equal(isMyEye(toGrid(eye), 1, 1), true);
+  const notEye = ["XXX", "X.X", "OXO"];    // two enemy diagonals -> not a real eye
+  assert.equal(isMyEye(toGrid(notEye), 1, 1), false);
 });
 
-test("scoreMove: self-atari penalised", () => {
-  // Surround an empty point by opponents with plenty of liberties (no capture) -> filling it is self-atari.
-  const board = boardFrom([
-    ".O.",
-    "O.O",
-    ".O.",
-  ]);
-  const size = board.length;
-  const liberties = libGrid(size, 5); // all O chains healthy -> no capture
-  const s = scoreMove(board, liberties, 1, 1); // center, surrounded by O
-  assert.ok(s < 0, "self-atari into healthy enemies should score negative");
+test("chooseMove: refuses to fill its own eye / suicide (passes)", () => {
+  const eye = ["XXX", "X.X", "XXX"];       // only empty is the eye; filling it is suicide
+  assert.equal(chooseMove(eye, validEmpties(eye)), null);
+});
+
+test("chooseMove: passes when there are no legal moves", () => {
+  const b = ["XX", "XX"];
+  assert.equal(chooseMove(b, validEmpties(b)), null);
 });

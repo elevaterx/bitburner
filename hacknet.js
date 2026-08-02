@@ -218,6 +218,16 @@ export async function main(ns) {
             ns.write(CTL_FILE, left > 0 ? ctlToStr({ mode: "budget", budget: left }) : "paused", "w");
         }
 
+        // durable status line for the panel + hud1 snapshot (ns.write = 0GB; inline, no import).
+        try {
+            const _modeShort = paused ? "PAUSED"
+                : ctl.mode === "budget" ? ("BUDGET $" + fmt(ctl.budget))
+                : ("PAYBACK<=" + MAX_PAYBACK + "s");
+            const _sline = n0 + "/" + MAX_NODES + "n  " + fmt(prod) + " h/s  $" + fmt(hnRate) + "/s  "
+                + _modeShort + (upgrades > 0 ? "  +" + upgrades + " ($" + fmt(spent) + ")" : "");
+            ns.write("status/hacknet.txt", JSON.stringify({ line: _sline, t: Date.now() }), "w");
+        } catch (e) {}
+
         ns.clearLog();
         for (const l of lines) ns.print(l);
         await ns.sleep(LOOP_MS);
