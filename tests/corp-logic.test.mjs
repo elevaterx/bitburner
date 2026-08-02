@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   distributeJobs, shouldAcceptOffer, upgradesToLevel, amountToReach,
   CORP_CITIES, DEFAULT_CORP_CFG,
+  nextProductName, lowestRated, planProduct,
 } from "../lib/corp-logic.js";
 
 test("distributeJobs: sums exactly to size, non-negative", () => {
@@ -49,4 +50,35 @@ test("amountToReach: clamped", () => {
 test("CORP_CITIES: the six", () => {
   assert.equal(CORP_CITIES.length, 6);
   assert.ok(CORP_CITIES.includes("Aevum") && CORP_CITIES.includes("Volhaven"));
+});
+
+test("nextProductName: increments past the highest index", () => {
+  assert.equal(nextProductName([]), "Prod-0");
+  assert.equal(nextProductName(["Prod-0", "Prod-1"]), "Prod-2");
+  assert.equal(nextProductName(["Prod-3", "Prod-1"]), "Prod-4"); // max+1, not count
+});
+
+test("lowestRated: picks the weakest product", () => {
+  const ps = [{ name: "a", effectiveRating: 50 }, { name: "b", effectiveRating: 10 }, { name: "c", effectiveRating: 30 }];
+  assert.equal(lowestRated(ps).name, "b");
+});
+
+test("planProduct: wait -> make -> replace", () => {
+  // a product still developing -> wait
+  assert.deepEqual(
+    planProduct([{ name: "Prod-0", developmentProgress: 40, effectiveRating: 0 }], 3),
+    { action: "wait", name: "Prod-0" },
+  );
+  // room for more, none developing -> make next
+  assert.deepEqual(
+    planProduct([{ name: "Prod-0", developmentProgress: 100, effectiveRating: 20 }], 3),
+    { action: "make", name: "Prod-1" },
+  );
+  // at cap, none developing -> churn the weakest
+  const full = [
+    { name: "Prod-0", developmentProgress: 100, effectiveRating: 20 },
+    { name: "Prod-1", developmentProgress: 100, effectiveRating: 5 },
+    { name: "Prod-2", developmentProgress: 100, effectiveRating: 40 },
+  ];
+  assert.deepEqual(planProduct(full, 3), { action: "replace", discontinue: "Prod-1", make: "Prod-3" });
 });
