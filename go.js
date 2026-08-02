@@ -39,7 +39,8 @@ export async function main(ns) {
     if (ns.args.includes("--iters")) cli.iters = Number(flags.iters);
     if (ns.args.includes("--budget")) cli.budget = Number(flags.budget);
     const merged = { iters: 400, budget: 600, ...readCtl(), ...cli };
-    ns.write(CTL, JSON.stringify({ iters: merged.iters, budget: merged.budget }), "w"); }
+    ns.write(CTL, JSON.stringify({ iters: merged.iters, budget: merged.budget }), "w");
+    log("up: iters=" + merged.iters + " budget=" + merged.budget + "ms  (kept in go-ctl.txt; opponent pins preserve these)"); }
 
   if (!ns.go || typeof ns.go.getBoardState !== "function") { log("IPvGO API unavailable. Exiting."); return; }
 
@@ -50,9 +51,9 @@ export async function main(ns) {
     const opponent = flags.opponent && flags["no-cycle"] ? String(flags.opponent) : OPPONENTS[oppIdx % OPPONENTS.length];
     try { ns.go.resetBoardState(opponent, size); } catch (e) { /* opponent may be locked */ }
     vlog("new game vs " + opponent + " (" + size + "x" + size + ")");
-    writeStatus(ns, "go", { line: "playing " + opponent + goRecord(ns, opponent) });
     let komi = 5.5; try { komi = ns.go.getGameState().komi; } catch (e) {}   // white's bonus, per opponent
     const cfg = { iters: 400, budget: 600, ...readCtl() };   // live engine tuning, re-read each game
+    writeStatus(ns, "go", { line: "playing " + opponent + goRecord(ns, opponent) + "  " + cfg.iters + "it" });
 
     let moves = 0, mvN = 0, itSum = 0, msSum = 0, fb = 0;   // per-game MCTS diagnostics
     while (true) {
