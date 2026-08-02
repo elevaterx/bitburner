@@ -54,12 +54,15 @@ export async function main(ns) {
     let komi = 5.5; try { komi = ns.go.getGameState().komi; } catch (e) {}   // white's bonus, per opponent
     const cfg = { iters: 400, budget: 600, ...readCtl() };   // live engine tuning, re-read each game
 
-    let moves = 0;
+    let moves = 0, mvN = 0, itSum = 0, msSum = 0, fb = 0;   // per-game MCTS diagnostics
     while (true) {
       const board = ns.go.getBoardState();
       const valid = ns.go.analysis.getValidMoves();
-      let move = mctsMove(board, { komi, iterations: Number(cfg.iters), rng: Math.random, now: () => Date.now(), deadline: Date.now() + Number(cfg.budget) });
-      if (move && !(valid[move.x] && valid[move.x][move.y])) move = chooseMove(board, valid);   // rare superko: fall back to the heuristic
+      const _t0 = Date.now(), _stats = {};
+      let move = mctsMove(board, { komi, iterations: Number(cfg.iters), rng: Math.random, now: () => Date.now(), deadline: Date.now() + Number(cfg.budget), stats: _stats });
+      const _fb = move && !(valid[move.x] && valid[move.x][move.y]);
+      if (_fb) move = chooseMove(board, valid);   // rare superko: fall back to the heuristic
+      msSum += Date.now() - _t0; itSum += _stats.iters || 0; mvN++; if (_fb) fb++;
 
       let res;
       try {
@@ -75,10 +78,22 @@ export async function main(ns) {
     const gs = ns.go.getGameState();
     vlog("game over vs " + opponent + " -- you " + gs.blackScore + " : " + gs.whiteScore + " opp");
     const won = gs.blackScore > gs.whiteScore;
-    writeStatus(ns, "go", { line: "vs " + opponent + " " + (won ? "W" : "L") + " " + gs.blackScore + ":" + gs.whiteScore + goRecord(ns, opponent) });
+    const _per = mvN || 1, _it = Math.round(itSum / _per), _ms = Math.round(msSum / _per);
+    const diag = " [" + _it + "it " + _ms + "ms" + (fb ? " fb" + fb : "") + "]";
+    writeStatus(ns, "go", { line: "vs " + opponent + " " + (won ? "W" : "L") + " " + gs.blackScore + ":" + gs.whiteScore + goRecord(ns, opponent) + diag });
+    appendGoHistory(ns, { t: Date.now(), opp: opponent, won, b: gs.blackScore, w: gs.whiteScore, komi, mv: moves, it: _it, ms: _ms, fb });
     if (!flags["no-cycle"]) oppIdx++;
     await ns.sleep(500);
   }
+}
+
+/** Append a per-game result + MCTS diagnostics to status/go-history.txt (last 25 games). Pure ns I/O. */
+function appendGoHistory(ns, rec) {
+  try {
+    let arr = []; try { const o = JSON.parse(ns.read("status/go-history.txt") || "[]"); if (Array.isArray(o)) arr = o; } catch (e) {}
+    arr.push(rec); if (arr.length > 25) arr = arr.slice(-25);
+    ns.write("status/go-history.txt", JSON.stringify(arr), "w");
+  } catch (e) {}
 }
 
 /** Cumulative W/L record + streak vs an opponent, from the free ns.go stats API (0 GB). "" on failure. */
