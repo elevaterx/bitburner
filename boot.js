@@ -127,6 +127,19 @@ export async function main(ns) {
         log(pid ? "hud1.js up" : "hud1.js FAILED");
     }
 
+    // ---- 6. late-game managers: gang + sleeves. Each SELF-GATES (exits immediately if its API
+    //         isn't available in this node), so launching unconditionally is safe -- and they earn
+    //         independently of the hacking farm, so we run them even in a dead-hack node. Guarded
+    //         so a re-boot never double-launches. ----
+    for (const f of ["gang.js", "sleeves.js", "bladeburner.js", "corp.js"]) {
+        let up = false;
+        for (const p of ns.ps("home")) if (p.filename === f) { up = true; break; }
+        if (up) { log(f + " already running -- left as-is"); continue; }
+        pid = ns.run(f);
+        log(pid ? (f + " up (self-gates if unavailable)") : (f + " not started -- check RAM"));
+        await ns.sleep(200);
+    }
+
     log("bootstrap complete. " + (farmMode ? "" : "[STOCKS-ONLY node: farm off] ") +
         (SHARE_CAP <= 0 ? "(no share) " : "share cap " + SHARE_CAP + "t ") +
         (PURCHASER_FRAC > 0 && farmMode ? "+ purchaser " + PURCHASER_FRAC + " " : "+ no purchaser ") +

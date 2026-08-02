@@ -1,0 +1,13 @@
+{
+  "name": "bitrunner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Nate's Bitburner automation suite. Root scripts are in-game NS scripts; lib/ holds pure, node-testable logic imported via relative paths (works in both Bitburner v3 and Node).",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
