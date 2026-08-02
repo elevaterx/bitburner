@@ -2,13 +2,16 @@
  *  continuously against an AI opponent. Always available (no capability gate) -- so it is NOT launched
  *  by boot.js; run it opt-in when you want the passive bonus and aren't playing the board yourself.
  *
- *  Strategy is a single-ply simulation scorer in lib/go-logic.js (pure, unit-tested): capture, rescue
- *  atari, expand, avoid self-atari. Plays as Black. On game over it starts a fresh game, cycling
- *  opponents so wins accrue toward stronger subnets.
+ *  Strategy is Monte-Carlo tree search (lib/go-mcts.js, unit-tested): grows a game tree and runs fast
+ *  eye-safe random playouts, reading well enough to beat the built-in subnet AIs at every komi tier. The
+ *  single-ply heuristic (lib/go-logic.js) is kept only as a superko fallback. Plays as Black; on game
+ *  over it starts a fresh game, cycling opponents so wins accrue toward stronger subnets.
  *
- *  usage:  run go.js [--size 9] [--opponent "Netburners"] [--no-cycle] [--quiet]
+ *  usage:  run go.js [--size 9] [--opponent "Netburners"] [--no-cycle] [--quiet] [--iters 400] [--budget 600]
+ *          --iters  MCTS playouts per move (higher = stronger, slower). --budget  ms hard cap per move.
  *  @param {NS} ns */
-import { chooseMove } from "./lib/go-logic.js";
+import { chooseMove } from "./lib/go-logic.js";   // superko fallback only
+import { mctsMove } from "./lib/go-mcts.js";
 import { writeStatus } from "./lib/modules.js";
 
 const OPPONENTS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"];
@@ -20,6 +23,8 @@ export async function main(ns) {
     ["opponent", ""],
     ["no-cycle", false],
     ["quiet", false],
+    ["iters", 400],
+    ["budget", 600],
   ]);
   const size = Number(flags.size);
   const log = (m) => ns.tprint("[go] " + m);
@@ -35,12 +40,14 @@ export async function main(ns) {
     try { ns.go.resetBoardState(opponent, size); } catch (e) { /* opponent may be locked */ }
     vlog("new game vs " + opponent + " (" + size + "x" + size + ")");
     writeStatus(ns, "go", { line: "playing " + opponent + goRecord(ns, opponent) });
+    let komi = 5.5; try { komi = ns.go.getGameState().komi; } catch (e) {}   // white's bonus, per opponent
 
     let moves = 0;
     while (true) {
       const board = ns.go.getBoardState();
       const valid = ns.go.analysis.getValidMoves();
-      const move = chooseMove(board, valid);
+      let move = mctsMove(board, { komi, iterations: Number(flags.iters), rng: Math.random, now: () => Date.now(), deadline: Date.now() + Number(flags.budget) });
+      if (move && !(valid[move.x] && valid[move.x][move.y])) move = chooseMove(board, valid);   // rare superko: fall back to the heuristic
 
       let res;
       try {
