@@ -45,7 +45,7 @@ export async function main(ns) {
     while (pending.length) {
       const a = pending.shift();
       if (a.type === "start") { if (!ns.isRunning(a.file, "home")) ns.run(a.file); }
-      else if (a.type === "stop") ns.scriptKill(a.file, "home");
+      else if (a.type === "stop") { ns.scriptKill(a.file, "home"); if (a.key) { enabled.delete(a.key); dirty = true; } }
       else if (a.type === "enable") { enabled.add(a.key); dirty = true; }
       else if (a.type === "disable") { enabled.delete(a.key); dirty = true; }
       else if (a.type === "relaunch") { ns.scriptKill(a.file, "home"); ns.run(a.file, 1, ...a.args); }
@@ -170,7 +170,7 @@ function view(h, { modRows, workerRows, homeFree, homeMax, node, auto, pending }
     const ram = h("span", { style: { color: !r.exists ? "#f66" : r.fits ? "#999" : "#e94", width: 84, textAlign: "right" } },
       r.cost ? fmtRam(r.cost) + (r.fits ? "" : " !") : "?");
     const startStop = r.running
-      ? btn("Stop", () => pending.push({ type: "stop", file: r.file }), "#f88")
+      ? btn("Stop", () => pending.push({ type: "stop", file: r.file, key: r.key }), "#f88")
       : btn("Start", () => pending.push({ type: "start", file: r.file }), "#8f8", !r.fits);
     const onOff = r.on
       ? btn("auto", () => pending.push({ type: "disable", key: r.key }), "#8f8")
