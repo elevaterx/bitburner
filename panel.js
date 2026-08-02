@@ -61,6 +61,7 @@ export async function main(ns) {
       return { m, exists, running, cost, fits, on, status };
     });
 
+    ns.clearLog();   // replace the previous render instead of appending (else the tail fills with dupes)
     ns.printRaw(view(h, { rows, homeFree, homeMax, node: caps.node, auto: !flags["no-auto"], pending }));
     await ns.sleep(1000);
   }
