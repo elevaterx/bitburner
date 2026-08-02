@@ -574,6 +574,23 @@ export async function main(ns) {
                 }
             }
         }
+        // --- IPvGO: full per-opponent record (live getStats, 0GB) + recent games w/ MCTS diagnostics ---
+        try {
+            const gst = ns.go.analysis.getStats();
+            const gopps = Object.keys(gst || {});
+            if (gopps.length) {
+                lines.push("");
+                lines.push("IPvGO RECORD (wins-losses  streak  bonus):");
+                for (const o of gopps) { const st = gst[o]; lines.push("  " + String(o).padEnd(14) + String(st.wins + "-" + st.losses).padStart(10) + "  streak " + String(st.winStreak).padStart(4) + "  " + (st.bonusPercent != null ? st.bonusPercent.toFixed(2) + "%" : "")); }
+            }
+        } catch (e) {}
+        try {
+            const gh = JSON.parse(ns.read("status/go-history.txt") || "[]");
+            if (Array.isArray(gh) && gh.length) {
+                lines.push("IPvGO LAST " + Math.min(gh.length, 12) + " GAMES (result  moves/iters/ms/fallbacks):");
+                for (const g of gh.slice(-12)) lines.push("  " + String(g.opp).padEnd(14) + (g.won ? "W " : "L ") + (g.b + ":" + g.w).padStart(11) + " k" + g.komi + "  " + g.mv + "mv " + g.it + "it " + g.ms + "ms fb" + g.fb);
+            }
+        } catch (e) {}
         statusText = lines.join("\n");
 
         // --- render ---
