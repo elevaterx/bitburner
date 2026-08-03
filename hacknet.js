@@ -93,6 +93,8 @@ export async function main(ns) {
         // $-value of one hash (for payback math), from the live "Sell for Money" hash cost.
         let hashVal = 0;
         try { hashVal = hashDollarValue(ns.hacknet.hashCost("Sell for Money")); } catch (e) {}
+        let hmult = 1;
+        try { hmult = ns.getPlayer().mults.hacknet_node_money || 1; } catch (e) {}   // real player mult for payback (BN mult is already baked into hashGainRate)
         // reserve the next home-RAM upgrade cost only when we're allowed to spend (RAM-aware)
         let homeReserve = 0;
         if (AUTO_HOME && !paused) { try { if (ns.getServerMaxRam("home") < HOME_TARGET) homeReserve = ns.singularity.getUpgradeHomeRamCost(); } catch (e) {} }
@@ -155,8 +157,7 @@ export async function main(ns) {
         // greedy loop: each iteration buys the affordable upgrade with the best hash-production
         // gain PER DOLLAR (ROI, via Formulas). Production mult cancels in the ratio so we pass
         // mult=1. Falls back to cheapest-first when Formulas isn't usable (plain nodes / no SF5).
-        let useF = false;
-        try { useF = !!F && ns.hacknet.hashCapacity() > 0; } catch (e) {}
+        const useF = !!F;   // Formulas usable; do NOT gate on hashCapacity (0 at bootstrap -> deadlock)
         let upgrades = 0;
         let spent = 0;
         const safetyCap = 200;   // hard upper bound on per-loop buys; prevents pathological spin
@@ -167,7 +168,7 @@ export async function main(ns) {
                 if (!Number.isFinite(cand.cost) || cand.cost > remaining) return;
                 // payback mode: only buy if it pays for itself within MAX_PAYBACK (needs the Formulas
                 // gain). budget mode ignores payback -- you asked for that upgrade explicitly.
-                if (payMode && (!useF || !paybackOk(cand.cost, cand.gain, hashVal, MAX_PAYBACK))) return;
+                if (payMode && (!useF || !paybackOk(cand.cost, cand.gain * hmult, hashVal, MAX_PAYBACK))) return;
                 const score = useF ? cand.gain / cand.cost : 1 / cand.cost;   // ROI, or cheapest-first
                 if (score > bestScore) { bestScore = score; best = cand; }
             };
