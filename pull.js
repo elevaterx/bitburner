@@ -28,7 +28,7 @@ export async function main(ns) {
     "coordinator.js", "prep.js", "h.js", "boot.js",
     "farm-status.js", "status.js", "hud.js",
     "puzzles.js", "purchaser.js", "cleanup.js",
-    "xp.js", "xpfarm.js", "sh.js", "shareall.js",
+    "xp.js", "xpfarm.js", "xph.js", "xpg.js", "sh.js", "shareall.js",
     "diagnose-income.js", "earners.js", "backdoors.js",
     "ramstat.js", "sing.js", "hacknet.js", "digrank.js",
     "hud1.js", "hud2.js", "cloudstat.js", "fatcheck.js",
@@ -42,7 +42,8 @@ export async function main(ns) {
     "update.js",
     "gang.js", "sleeves.js", "bladeburner.js", "corp.js", "go.js", "panel.js",
     "lib/fmt.js", "lib/net.js", "lib/caps.js", "lib/modules.js",
-    "lib/gang-logic.js", "lib/sleeve-logic.js", "lib/bladeburner-logic.js", "lib/corp-logic.js", "lib/go-logic.js"
+    "lib/gang-logic.js", "lib/sleeve-logic.js", "lib/bladeburner-logic.js", "lib/corp-logic.js", "lib/go-logic.js",
+    "lib/go-mcts.js", "lib/hacknet-budget.js", "lib/xp-alloc.js"
   ];
   const base = "https://raw.githubusercontent.com/" + USER + "/" + REPO + "/" + BRANCH + "/";
 
