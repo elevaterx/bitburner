@@ -44,6 +44,10 @@ export async function main(ns) {
 
   if (!ns.go || typeof ns.go.getBoardState !== "function") { log("IPvGO API unavailable. Exiting."); return; }
 
+  // Only ONE go.js may run -- there is a single IPvGO board. A duplicate (e.g. a panel pin racing the
+  // auto-launch) would fight over board resets and produce phantom 0-move games. Newest instance wins:
+  try { for (const p of ns.ps("home")) if (p.filename === "go.js" && p.pid !== ns.pid) ns.kill(p.pid); } catch (e) {}
+
   let oppIdx = 0;
   if (flags.opponent) { const i = OPPONENTS.indexOf(String(flags.opponent)); if (i >= 0) oppIdx = i; }
 
@@ -81,8 +85,10 @@ export async function main(ns) {
     const won = gs.blackScore > gs.whiteScore;
     const _per = mvN || 1, _it = Math.round(itSum / _per), _ms = Math.round(msSum / _per);
     const diag = " [" + _it + "it " + _ms + "ms" + (fb ? " fb" + fb : "") + "]";
-    writeStatus(ns, "go", { line: "vs " + opponent + " " + (won ? "W" : "L") + " " + gs.blackScore + ":" + gs.whiteScore + goRecord(ns, opponent) + diag });
-    appendGoHistory(ns, { t: Date.now(), opp: opponent, won, b: gs.blackScore, w: gs.whiteScore, komi, mv: moves, it: _it, ms: _ms, fb });
+    if (moves > 0) {   // skip phantom 0-move games (board was not fresh -- e.g. a stray duplicate instance)
+      writeStatus(ns, "go", { line: "vs " + opponent + " " + (won ? "W" : "L") + " " + gs.blackScore + ":" + gs.whiteScore + goRecord(ns, opponent) + diag });
+      appendGoHistory(ns, { t: Date.now(), opp: opponent, won, b: gs.blackScore, w: gs.whiteScore, komi, mv: moves, it: _it, ms: _ms, fb });
+    } else { vlog("skipped phantom game vs " + opponent + " (0 moves)"); }
     if (!flags["no-cycle"]) oppIdx++;
     await ns.sleep(500);
   }
