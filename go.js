@@ -64,6 +64,11 @@ export async function main(ns) {
     const cfg = { iters: 400, budget: 600, ...readCtl() };   // live engine tuning, re-read each game
     writeStatus(ns, "go", { line: "playing " + opponent + goRecord(ns, opponent) + "  " + cfg.iters + "it" });
 
+    // Did the game actually REACH gameOver? This is the difference between a scored game and a
+    // discarded one, and nothing else in the record distinguishes them: abandoning a game in
+    // progress still books losses++ (via resetBoardState -> resetWinstreak(ai, false)) but skips
+    // endGoGame entirely, so it earns ZERO nodePower. Only a completed game moves the bonus.
+    let ended = false;
     let moves = 0, mvN = 0, itSum = 0, msSum = 0, fb = 0;   // per-game MCTS diagnostics
     // Derive the safety cap from the ACTUAL board, never from the requested `size`. The hidden
     // opponent forces 19x19 internally (boardState.ts:26-30) whatever size we ask for, so a
@@ -86,7 +91,7 @@ export async function main(ns) {
         res = move ? await ns.go.makeMove(move.x, move.y) : await ns.go.passTurn();
       } catch (e) { res = null; }
 
-      if (!res || res.type === "gameOver") break;
+      if (!res || res.type === "gameOver") { ended = res && res.type === "gameOver"; break; }
       if (!move && res.type === "pass") break;   // both sides passed -> game ends
       moves++;
       if (moves > moveCap) break;                 // safety: never loop forever on a stuck board
@@ -96,10 +101,10 @@ export async function main(ns) {
     vlog("game over vs " + opponent + " -- you " + gs.blackScore + " : " + gs.whiteScore + " opp");
     const won = gs.blackScore > gs.whiteScore;
     const _per = mvN || 1, _it = Math.round(itSum / _per), _ms = Math.round(msSum / _per);
-    const diag = " [" + _it + "it " + _ms + "ms" + (fb ? " fb" + fb : "") + "]";
+    const diag = " [" + _it + "it " + _ms + "ms" + (fb ? " fb" + fb : "") + (ended ? "" : " ABANDONED") + "]";
     if (moves > 0) {   // skip phantom 0-move games (board was not fresh -- e.g. a stray duplicate instance)
       writeStatus(ns, "go", { line: "vs " + opponent + " " + (won ? "W" : "L") + " " + gs.blackScore + ":" + gs.whiteScore + goRecord(ns, opponent) + diag });
-      appendGoHistory(ns, { t: Date.now(), opp: opponent, won, b: gs.blackScore, w: gs.whiteScore, komi, mv: moves, it: _it, ms: _ms, fb });
+      appendGoHistory(ns, { t: Date.now(), opp: opponent, won, b: gs.blackScore, w: gs.whiteScore, komi, mv: moves, it: _it, ms: _ms, fb, fin: ended ? 1 : 0 });
     } else { vlog("skipped phantom game vs " + opponent + " (0 moves)"); }
     if (!flags["no-cycle"]) oppIdx++;
     await ns.sleep(500);
