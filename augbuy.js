@@ -9,12 +9,16 @@
  *  MONEY price by 1.9x, so one huge round blows up cost. This buys until the next is
  *  unaffordable; install between rounds so prices reset and prereqs unlock.
  *
- *  usage: run augbuy.js [buy] [donate] [all] [nfg] [--budget N]
+ *  usage: run augbuy.js [buy] [donate] [all] [nfg] [--why] [--budget N] [--cutoff K]
  *    (no flags)  DRY RUN -- report what it WOULD buy / donate and what's blocked
  *    buy         actually purchase
  *    donate      buy missing rep via donation (favor >= 150 only) -- can cost trillions+
  *    all         include non-hacking augs too (for the Daedalus 30-aug count)
  *    nfg         also buy NeuroFlux Governor levels (expensive; buy deliberately)
+ *    --why       print the per-slot economics of the chosen round: what each aug costs at its
+ *                slot, and the MARGINAL cost of including it (higher, because adding an aug pushes
+ *                every cheaper one down a slot). Read this before committing -- it is the column
+ *                that makes a bad basket obvious without having to trust the selector.
  *    --cutoff K  drop an aug whose realized $/value is worse than K x the round's best buy
  *                (default 10). Guards the tail of a long round, where the 1.9^slot escalation
  *                makes a cheap aug cost more than it is worth deferring one install.
@@ -29,7 +33,7 @@
  *  continuously (kill xpfarm briefly if home is tight). Excludes "The Red Pill" (node-exit;
  *  install that deliberately as the last step). Does NOT install -- you install when ready.
  *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
-import { augValue, selectRound, roundCost, nodeWeights, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
+import { augValue, selectRound, roundCost, roundEconomics, nodeWeights, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -37,6 +41,7 @@ export async function main(ns) {
     const DONATE = ns.args.includes("donate");
     const ALL    = ns.args.includes("all");
     const NFG    = ns.args.includes("nfg");
+    const WHY    = ns.args.includes("--why") || ns.args.includes("why");
     const bIdx   = ns.args.indexOf("--budget");
     const BUDGET_ARG = bIdx >= 0 ? Number(ns.args[bIdx + 1]) : NaN;
     const cIdx   = ns.args.indexOf("--cutoff");
@@ -192,6 +197,36 @@ export async function main(ns) {
         ns.tprint("blocked on MONEY (" + blockedMoney.length + "):");
         for (const c of blockedMoney) ns.tprint("  - " + c.aug + "  $" + fmt(c.price));
     }
+    if (WHY && list.length) {
+        // The diagnostic that makes a bad round visible WITHOUT trusting the selector. Every defect
+        // this tool has shipped was caught by running it and reading the numbers, never by review or
+        // by unit tests -- the tests encode the same model that produced the bug. So: print the model
+        // and let it be checked.
+        const econ = roundEconomics(list, { priceScale: queueMult });
+        const totV = econ.reduce((a, r) => a + r.value, 0);
+        const totC = econ.reduce((a, r) => a + r.paid, 0);
+        const fin = econ.map(r => r.marginalPerValue).filter(Number.isFinite);
+        const best = fin.length ? Math.min(...fin) : Infinity;
+        ns.tprint("");
+        ns.tprint("WHY -- 'paid' is this aug's own price at its slot; 'marginal' is what DROPPING it would");
+        ns.tprint("save, which is larger because every cheaper aug then moves up a slot. Judge on marg$/val.");
+        ns.tprint("slot " + "aug".padEnd(34) + "     paid  value    $/val   marginal marg$/val  escal");
+        for (const r of econ) {
+            const weak = Number.isFinite(r.marginalPerValue) && r.marginalPerValue > best * 5;
+            ns.tprint(
+                String(r.slot).padStart(4) + " " + String(r.aug).slice(0, 34).padEnd(34) +
+                " $" + fmt(r.paid).padStart(7) +
+                " " + r.value.toFixed(3).padStart(6) +
+                " $" + fmt(r.perValue).padStart(7) +
+                " $" + fmt(r.marginal).padStart(8) +
+                " $" + fmt(r.marginalPerValue).padStart(8) +
+                " " + r.escalation.toFixed(1).padStart(6) + "x" + (weak ? "  <-- weak" : ""));
+        }
+        ns.tprint("     " + "TOTAL".padEnd(34) + " $" + fmt(totC).padStart(7) + " " + totV.toFixed(3).padStart(6)
+            + " $" + fmt(totV > 0 ? totC / totV : 0).padStart(7) + "   avg $/value for the round");
+        ns.tprint("");
+    }
+
     ns.tprint(bought.length
         ? "Next: INSTALL (game UI, or singularity.installAugmentations) to apply -- then run again for the next round."
         : "Nothing bought. Grind rep/level, or add 'donate' (favor>=150) / 'buy' as appropriate.");

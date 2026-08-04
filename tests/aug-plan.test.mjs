@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   AUG_PRICE_MULT, DEFAULT_WEIGHTS, BASE_WEIGHTS, augValue, valueDensity, roundCost, selectRound,
-  moneyFarmWeight, nodeWeights,
+  moneyFarmWeight, nodeWeights, roundEconomics,
 } from "../lib/aug-plan.js";
 
 test("augValue: weighted log-sum, ignores mults <= 1 and unknown keys", () => {
@@ -182,4 +182,61 @@ test("selectRound: priceScale accounts for augs already queued from earlier runs
   // scale <= 0 or non-finite is ignored rather than zeroing the budget
   assert.equal(selectRound(cands, 20, { priceScale: 0 }).length, 2);
   assert.equal(selectRound(cands, 20, { priceScale: NaN }).length, 2);
+});
+
+test("roundEconomics: marginal exceeds paid for every aug except the cheapest", () => {
+  const basket = [
+    { aug: "a", base: 4, value: 1 },
+    { aug: "b", base: 2, value: 1 },
+    { aug: "c", base: 1, value: 1 },
+  ];
+  const rows = roundEconomics(basket);
+  assert.deepEqual(rows.map((r) => r.aug), ["a", "b", "c"]);          // purchase order
+  assert.equal(rows[0].slot, 0);
+  assert.ok(Math.abs(rows[0].paid - 4) < 1e-9);                       // 4 * 1.9^0
+  assert.ok(Math.abs(rows[1].paid - 2 * 1.9) < 1e-9);
+  assert.ok(Math.abs(rows[2].paid - 1 * 3.61) < 1e-9);
+  // dropping a mid aug also moves everything cheaper up a slot -> marginal > paid
+  assert.ok(rows[0].marginal > rows[0].paid);
+  assert.ok(rows[1].marginal > rows[1].paid);
+  // ...except the LAST slot, where nothing sits below it
+  assert.ok(Math.abs(rows[2].marginal - rows[2].paid) < 1e-9);
+  // marginal is exactly total minus the basket without it
+  const total = roundCost([4, 2, 1]);
+  assert.ok(Math.abs(rows[1].marginal - (total - roundCost([4, 1]))) < 1e-9);
+});
+
+test("roundEconomics: reproduces the live 8-aug round", () => {
+  const W = nodeWeights({ scriptHackMoneyGain: 1, serverMaxMoney: 0.08, moneyFarmRunning: false });
+  const basket = [
+    { aug: "Neuronal Densification", base: 1.38, value: augValue({ hacking: 1.15, hacking_exp: 1.10, hacking_speed: 1.03 }, W) },
+    { aug: "ADR-V2", base: 0.550, value: augValue({ faction_rep: 1.20 }, W) },
+    { aug: "Shadow", base: 0.400, value: augValue({ faction_rep: 1.15 }, W) },
+    { aug: "Neural-Retention", base: 0.250, value: augValue({ hacking_exp: 1.25 }, W) },
+    { aug: "CRTX42-AA", base: 0.225, value: augValue({ hacking: 1.08, hacking_exp: 1.15 }, W) },
+    { aug: "ASP", base: 0.080, value: augValue({ hacking_exp: 1.05, hacking_speed: 1.02, hacking_chance: 1.05 }, W) },
+    { aug: "S.N.A", base: 0.030, value: augValue({ faction_rep: 1.15 }, W) },
+    { aug: "ADR-V1", base: 0.0175, value: augValue({ faction_rep: 1.10 }, W) },
+  ];
+  const rows = roundEconomics(basket);
+  const top = rows[0];
+  assert.equal(top.aug, "Neuronal Densification");
+  assert.ok(Math.abs(top.value - 0.250) < 0.001);
+  assert.ok(Math.abs(top.paid - 1.38) < 0.01);
+  assert.ok(Math.abs(top.marginal - 7.11) < 0.05);          // measured in game: $7.11b
+  assert.ok(Math.abs(top.marginalPerValue - 28.4) < 0.3);   // $28.4b per unit value
+  // paid and marginal rank the basket differently -- the whole reason both columns exist
+  const worstPaid = [...rows].sort((a, b) => b.perValue - a.perValue)[0].aug;
+  const worstMarg = [...rows].sort((a, b) => b.marginalPerValue - a.marginalPerValue)[0].aug;
+  assert.notEqual(worstPaid, worstMarg);
+});
+
+test("roundEconomics: priceScale and degenerate inputs", () => {
+  assert.deepEqual(roundEconomics([]), []);
+  assert.deepEqual(roundEconomics(null), []);
+  const scaled = roundEconomics([{ aug: "x", base: 2, value: 1 }], { priceScale: 10 });
+  assert.equal(scaled[0].paid, 20);
+  assert.equal(scaled[0].escalation, 10);
+  // zero-value augs report Infinity rather than dividing by zero
+  assert.equal(roundEconomics([{ aug: "z", base: 1, value: 0 }])[0].perValue, Infinity);
 });
