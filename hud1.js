@@ -597,7 +597,11 @@ export async function main(ns) {
             const gh = JSON.parse(ns.read("status/go-history.txt") || "[]");
             if (Array.isArray(gh) && gh.length) {
                 lines.push("IPvGO LAST " + Math.min(gh.length, 12) + " GAMES (result  moves/iters/ms/fallbacks):");
-                for (const g of gh.slice(-12)) lines.push("  " + String(g.opp).padEnd(14) + (g.won ? "W " : "L ") + (g.b + ":" + g.w).padStart(11) + " k" + g.komi + "  " + g.mv + "mv " + g.it + "it " + g.ms + "ms fb" + g.fb);
+                // g.fin === 0 means the game never reached gameOver -- it was abandoned by the next
+                // resetBoardState, which books losses++ but skips endGoGame, so it earned ZERO
+                // nodePower. Nothing else in the record distinguishes that from a played-out loss,
+                // so surface it loudly. Older records predate the field; undefined is NOT abandoned.
+                for (const g of gh.slice(-12)) lines.push("  " + String(g.opp).padEnd(14) + (g.won ? "W " : "L ") + (g.b + ":" + g.w).padStart(11) + " k" + g.komi + "  " + g.mv + "mv " + g.it + "it " + g.ms + "ms fb" + g.fb + (g.fin === 0 ? "  !! ABANDONED (0 nodePower)" : ""));
             }
         } catch (e) {}
         statusText = lines.join("\n");
