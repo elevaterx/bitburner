@@ -12,7 +12,7 @@
  * -- so for The-Cave it will show whether w0r1d_d43m0n is adjacent (it appears once The Red
  * Pill is installed). Reusable for the exit itself: `run goto.js w0r1d_d43m0n`.
  *
- * Must be added to pull.js. */
+ * Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). */
 export async function main(ns) {
     const targetArg = ns.args[0] !== undefined ? String(ns.args[0]) : "The-Cave";
     const doBackdoor = String(ns.args[1] || "").toLowerCase() === "backdoor";

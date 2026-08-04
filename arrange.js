@@ -5,7 +5,7 @@
  * pid and re-applies its position+size from the shared winlayout.js table. Windows that aren't
  * running are skipped. Safe to run anytime -- it only moves/resizes existing tails.
  *
- * Must be added to pull.js. */
+ * Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). */
 import { applyLayout, pidOf, LAYOUT } from "winlayout.js";
 
 export async function main(ns) {

@@ -28,7 +28,7 @@
  *  4S/TIX/WSE access survives an augmentation install and is cleared only on BitNode
  *  exit (prestigeSourceFile, not prestigeAugmentation).
  *
- *  Must be added to pull.js. @param {NS} ns */
+ *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.ui.openTail();

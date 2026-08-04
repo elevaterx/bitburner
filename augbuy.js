@@ -28,7 +28,7 @@
  *  Real singularity calls (needs SF4) -- RAM is significant (~40-50GB); run on demand, not
  *  continuously (kill xpfarm briefly if home is tight). Excludes "The Red Pill" (node-exit;
  *  install that deliberately as the last step). Does NOT install -- you install when ready.
- *  Must be in pull.js. @param {NS} ns */
+ *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
 import { augValue, selectRound, roundCost, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
 
 export async function main(ns) {

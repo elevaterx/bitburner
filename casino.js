@@ -22,7 +22,7 @@
  *
  *  DOM/React-internals: cannot be node-tested, version-fragile. Heavily logged so we
  *  can debug from output. TEST 'noscum' at a small bet FIRST to confirm nav works.
- *  Must be in pull.js. @param {NS} ns */
+ *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.ui.openTail();

@@ -6,7 +6,7 @@
  *  is available on-demand via the "list" buttons (dumped to terminal). For faction rep
  *  and aug planning, launch hud2.js (Singularity-driven, RAM-expensive).
  *
- *  Must be added to pull.js. @param {NS} ns */
+ *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
 import { applyLayout } from "winlayout.js";
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -33,9 +33,22 @@ export async function main(ns) {
         // --- pending button actions ---
         if (action) {
             try {
-                if (action === "pull") {
-                    const pid = ns.run("pull.js");
-                    ns.toast(pid ? "running pull.js" : "pull.js not found", pid ? "info" : "error", 2500);
+                if (action === "update" || action === "updaterestart") {
+                    // update.js replaced pull.js (which is retired to _to_delete/). It discovers the
+                    // repo tree from the GitHub API, so it needs no manifest -- but it also pulls from
+                    // GITHUB, not from disk: a local edit is invisible until it is committed and
+                    // pushed. Overwriting a RUNNING script is safe (update.js's header documents the
+                    // verification), the new code just takes effect the next time that script starts.
+                    // Hence the two buttons: plain fetches, 'restart' also relaunches via boot.js so
+                    // the new code is live immediately.
+                    if (ns.isRunning("update.js", "home")) {
+                        ns.toast("update.js already running", "warning", 2000);
+                    } else {
+                        const restart = action === "updaterestart";
+                        const pid = restart ? ns.run("update.js", 1, "restart") : ns.run("update.js");
+                        ns.toast(pid ? ("update.js running" + (restart ? " (will restart the stack)" : " -- new code applies on next script start)"))
+                            : "update.js not found", pid ? "success" : "error", 3000);
+                    }
                 } else if (action === "coldstart") {
                     // run boot.js -- the single source of truth for the cold-start launch sequence
                     // (sharecap-before-coord ordering, sing/purchaser/coord/hud1). hud1 stays running;
@@ -628,7 +641,21 @@ export async function main(ns) {
 
         // --- render ---
         ns.clearLog();
+        const updRunning = ns.isRunning("update.js", "home");
         ns.printRaw(h("div", { style: { fontFamily: "monospace", background: bg, padding: 6 } },
+            // Top row: deploy controls. Kept above the panels because this is the one action you take
+            // BEFORE reading anything else -- if the repo moved, every number below is from old code.
+            h("div", {
+                style: {
+                    display: "flex", alignItems: "center", gap: 6, paddingBottom: 5, marginBottom: 5,
+                    borderBottom: "1px solid " + panelBorder,
+                },
+            },
+                h("span", { style: { color: titleColor, fontSize: 12, fontWeight: "bold", marginRight: 2 } }, "bitrunner"),
+                btn(updRunning ? "UPDATING..." : "UPDATE", () => { action = "update"; }, updRunning ? warnColor : incomeColor),
+                btn("+restart", () => { action = "updaterestart"; }, warnColor),
+                h("span", { style: { color: muted, fontSize: 10 } }, "pulls from GitHub"),
+            ),
             panel("RAM",
                 ramBar("home", homeUsed, homeMax),
                 ramBar("cloud", cloudUsed, cloudMax, cloudCount),
@@ -684,7 +711,6 @@ export async function main(ns) {
             panel("CONTROLS",
                 h("div", { style: { display: "flex", flexWrap: "wrap" } },
                     btn("COLD START", () => { action = "coldstart"; }, incomeColor),
-                    btn("pull", () => { action = "pull"; }, hackColor),
                     btn("puzzles", () => { action = "puzzles"; }, hackColor),
                     btn("xp farm", () => { action = "xpfarm"; }, hackColor),
                     btn("kill xp", () => { action = "killxp"; }, warnColor),

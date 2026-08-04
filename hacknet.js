@@ -28,7 +28,7 @@
  *  `payback` or `budget:500e9`, save. CASH_RESERVE is a hard floor under everything.
  *
  *  Tunables at top: CASH_RESERVE, MAX_PAYBACK, CACHE_AT, HOME_TARGET, STACK, LOOP_MS.
- *  Verify RAM with `mem hacknet.js`. Must be in pull.js to deploy.
+ *  Verify RAM with `mem hacknet.js`. Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). to deploy.
  *
  *  @param {NS} ns */
 import { parseCtl, ctlToStr, paybackOk, spendCeiling, hashDollarValue } from "./lib/hacknet-budget.js";

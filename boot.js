@@ -14,7 +14,7 @@
  *    [1] purchaserFrac -- cloud purchaser spend fraction. default 0 = off.
  *    [2] coordPreset   -- coord scenario preset. default 'income'.
  *
- *  Must be added to pull.js.
+ *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit).
  *
  *  NODE-AWARE: in nodes where scripted hacking earns ~nothing (BN8 Ghost of Wall
  *  Street), the coordinator/farm produce $0 while consuming the whole pool, so boot

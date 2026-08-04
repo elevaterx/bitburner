@@ -5,7 +5,7 @@
  *  Shows per joined faction: rep, count of augs offered that you don't own (NFG excluded
  *  -- it's shown separately as a stacking level indicator with next-rep/cost).
  *
- *  Must be added to pull.js. @param {NS} ns */
+ *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
 import { applyLayout } from "winlayout.js";
 export async function main(ns) {
     ns.disableLog("ALL");

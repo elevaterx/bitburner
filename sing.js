@@ -18,7 +18,7 @@
  *
  *  RAM: this script statically references ~10 Singularity functions; at SF4
  *  base costs in BN4 expect ~20-30 GB. Run `mem sing.js` to verify before deploy.
- *  Must be added to pull.js's file list to deploy via pull on other hosts.
+ *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit).
  *
  *  NODE-AWARE: on launch sing reads the current BitNode (getResetInfo) and its
  *  multipliers (getBitNodeMultipliers, needs SF5) and picks a launch PROFILE that
