@@ -15,6 +15,7 @@
  *  usage:  run gang.js [--once] [--equip-frac 0.1] [--train-until 200] [--ascend 1.5] [--no-warfare]
  *  @param {NS} ns */
 import { getCapabilities } from "./lib/caps.js";
+import { accessKarmaRequirement, rankGangRoutes } from "./lib/gang-bootstrap.js";
 import { money as fmtMoney, num as fmtNum } from "./lib/fmt.js";
 import { writeStatus } from "./lib/modules.js";
 import {
@@ -68,43 +69,60 @@ export async function main(ns) {
   }
 }
 
-/** Bring us into a gang if possible. Returns true once in a gang. */
+/** Bring us into a gang if possible. Returns true once in a gang.
+ *
+ *  NO SINGULARITY CALLS. This used to call checkFactionInvitations / joinFaction / commitCrime /
+ *  getCurrentWork, which at SF4 level 2 cost 4x their base (RamCostGenerator SF4Cost) and pushed
+ *  gang.js to 50.7GB -- unlaunchable on the 32GB home you get after a BitNode reset
+ *  (Prestige.ts:242-248), which is exactly when you need it. Joining is sing.js's job: it already
+ *  pays for Singularity, already accepts whitelisted invites, and already backdoors avmnite-02h
+ *  and I.I.I.I -- the two servers that invite you to NiteSec and The Black Hand, the only gang
+ *  factions with NO karma, combat, money or city requirement at all.
+ *
+ *  It also used to gate on GANG_KARMA_REQ (-54,000) in every node. That is wrong in BN2:
+ *  canAccessGang (PlayerObjectGangMethods.ts:16) returns success on `bitNodeN === 2` BEFORE
+ *  reaching the karma check, so inside BN2 the only requirement is the faction's own invite. */
 async function tryFormGang(ns, caps, log, markBlocked, alreadyBlocked) {
   const p = ns.getPlayer();
 
-  // Already a member of an eligible faction? Just create the gang.
+  // Already a member of an eligible faction? Create the gang -- needs no Singularity.
   for (const f of GANG_FACTIONS) {
     if (p.factions.includes(f) && ns.gang.createGang(f)) return true;
   }
 
-  if (!caps.singularity) {
-    if (!alreadyBlocked) {
-      log("Not in a gang and no SF-4 to automate it. Join a gang faction manually (" +
-        GANG_FACTIONS.join(", ") + "); I'll take over once you're in one.");
-      markBlocked();
-    }
-    return false;
-  }
+  if (alreadyBlocked) return false;
 
-  // With Singularity: accept an eligible invite if we have one, else farm karma toward the requirement.
-  const invites = ns.singularity.checkFactionInvitations();
-  for (const f of invites) {
-    if (GANG_FACTIONS.includes(f) && ns.singularity.joinFaction(f)) {
-      if (ns.gang.createGang(f)) return true;
-    }
-  }
+  let node = 0;
+  try { node = ns.getResetInfo().currentNode; } catch (e) {}
+  const accessReq = accessKarmaRequirement(node, GANG_KARMA_REQ);
+  const shortfall = Math.max(0, (p.karma ?? 0) - accessReq);
 
-  if (p.karma > GANG_KARMA_REQ) {
-    // Homicide is the fastest karma/combat route; only (re)start if we're not already on it.
-    const work = ns.singularity.getCurrentWork();
-    if (!work || work.type !== "CRIME" || work.crimeType !== "Homicide") {
-      ns.singularity.commitCrime("Homicide", false);
-    }
-    log("building karma for a gang: " + Math.round(p.karma) + " / " + GANG_KARMA_REQ +
-      " (committing Homicide)");
+  const routes = rankGangRoutes({
+    skills: p.skills,
+    hacking: p.skills && p.skills.hacking,
+    money: p.money,
+    karma: p.karma,
+    kills: p.numPeopleKilled,
+    city: p.city,
+    backdoored: [],          // gang.js won't pay 2GB for getServer; sing.js owns backdoors
+    factions: p.factions,
+  }, GANG_FACTIONS);
+
+  const best = routes[0];
+  if (best) {
+    const gap = best.gap || {};
+    const need = Object.entries(gap)
+      .map(([k, v]) => (k === "backdoor" ? "backdoor " + v : k === "cities" ? "be in " + v.join("/") : k + " " + Math.round(v)))
+      .join(", ");
+    log("not in a gang. Cheapest route: " + best.faction +
+        (best.hackingGang ? " (hacking gang)" : " (combat gang)") +
+        (need ? " -- needs " + need : " -- requirements already met, waiting on the invite") +
+        (shortfall > 0 ? "; plus " + Math.round(shortfall) + " more karma for the node's access gate" : "") +
+        ". sing.js drives the join; I take over the moment you are in one.");
   } else {
-    log("karma met (" + Math.round(p.karma) + ") but no eligible gang invite yet -- keep committing crime / lowering karma.");
+    log("not in a gang and no route found. Join a gang faction manually (" + GANG_FACTIONS.join(", ") + ").");
   }
+  markBlocked();
   return false;
 }
 

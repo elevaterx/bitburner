@@ -43,7 +43,7 @@ export async function main(ns) {
     "gang.js", "sleeves.js", "bladeburner.js", "corp.js", "go.js", "panel.js",
     "lib/fmt.js", "lib/net.js", "lib/caps.js", "lib/modules.js",
     "lib/gang-logic.js", "lib/sleeve-logic.js", "lib/bladeburner-logic.js", "lib/corp-logic.js", "lib/go-logic.js",
-    "lib/go-mcts.js", "lib/hacknet-budget.js", "lib/xp-alloc.js"
+    "lib/go-mcts.js", "lib/hacknet-budget.js", "lib/xp-alloc.js", "lib/gang-bootstrap.js"
   ];
   const base = "https://raw.githubusercontent.com/" + USER + "/" + REPO + "/" + BRANCH + "/";
 
