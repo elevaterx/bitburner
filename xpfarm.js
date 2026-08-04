@@ -25,10 +25,23 @@
  *    xpg.js  grow   1.75 GB/thread   XP/sec 0.3125, plus it re-arms the balance
  *    xpw.js  weaken 1.80 GB/thread   XP/sec 0.25, holds security at min
  *
+ *  SECURITY IS THE FAILURE MODE, NOT THREAD COUNT. Drift is a positive feedback loop: higher
+ *  hackDifficulty -> lower percentHacked (Hacking.ts:51) -> higher maxThreadNeeded = ceil(1/pct)
+ *  -> MORE fortify per op, since fortify is 0.002*min(threads, maxThreadNeeded). At difficulty
+ *  100 pct hits 0, mtn becomes the 1e6 sentinel, hackChance becomes 0, and every op pays the 25%
+ *  failure tier -- making the fleet WORSE than a grow farm. It is easy to miss because for a
+ *  low-requiredHackingSkill target the op TIME barely moves (calculateHackingTime's
+ *  2.5*req*difficulty term is swamped by its +500 constant), so it reads as underperformance
+ *  rather than breakage. Weaken is therefore over-provisioned on purpose: --safety x the
+ *  modelled need, floored at --weaken-pct of the fleet. Watch the "tier" figure in the status
+ *  line -- 1.00 is healthy, 0.25 means every op is failing.
+ *
  *  usage: run xpfarm.js [target] [--targets N] [--band N] [--grow-inst N] [--grow-threads N]
- *                       [--reserve GB] [--loop MS] [--no-hack] [--dry]
+ *                       [--weaken-pct N] [--safety N] [--reserve GB] [--loop MS] [--no-hack] [--dry]
  *    target         force a single target host (default: auto-rank)
- *    --targets N    how many targets to spread across (default 2)
+ *    --targets N    how many targets to spread across (default 1)
+ *    --weaken-pct N hard floor on weaken threads, % of fleet (default 3)
+ *    --safety N     multiplier on the modelled weaken need (default 4)
  *    --band N       weaken when security exceeds min by more than N (default 2)
  *    --grow-inst N  grow instances per host per target (default 4 -- ~3.2 is parity with
  *                   one hack instance, see lib/xp-alloc growInstancesFor)
@@ -71,6 +84,8 @@ export async function main(ns) {
   const GROW_INST = Math.max(0, Number(flag("grow-inst", 4)));
   const GROW_THREADS = Math.max(1, Number(flag("grow-threads", 40)) || 40);
   const HOME_RESERVE = Math.max(0, Number(flag("reserve", 64)));
+  const WEAKEN_PCT = Math.max(0, Number(flag("weaken-pct", 3)));   // hard floor, % of fleet
+  const SAFETY = Math.max(1, Number(flag("safety", 4)));           // multiplier on modelled need
   const LOOP_MS = Math.max(2000, Number(flag("loop", 10000)) || 10000);
   const USE_HACK = !has("no-hack");
   const DRY = has("dry");
@@ -169,6 +184,17 @@ export async function main(ns) {
     for (const t of targets) {
       const sec = ns.getServerSecurityLevel(t.host);
       const min = ns.getServerMinSecurityLevel(t.host);
+      // RE-MEASURE LIVE. percentHacked falls as security rises (Hacking.ts:46,51), so
+      // maxThreadNeeded = ceil(1/pct) RISES -- and fortify is 0.002*min(threads, maxThreadNeeded).
+      // Sizing weaken off a pct cached at minimum security under-provisions exactly when security
+      // starts to drift, and the feedback runs away: drift -> bigger mtn -> more fortify per op ->
+      // more drift. At hackDifficulty >= 100 pct hits 0, mtn becomes the 1e6 sentinel, hackChance
+      // becomes 0, and every op collapses to the 25% failure tier. Never cache these.
+      try {
+        t.pct = ns.hackAnalyze(t.host);
+        t.chance = ns.hackAnalyzeChance(t.host);
+        t.hackTimeMs = ns.getHackTime(t.host);
+      } catch (e) { /* keep last known */ }
       state.set(t.host, {
         sec, min, drift: sec - min,
         money: ns.getServerMoneyAvailable(t.host),
@@ -199,21 +225,26 @@ export async function main(ns) {
       const t = targets[hostIdx % targets.length];
       const st = state.get(t.host);
 
-      // weaken need: hold security flat against the hack + grow instances on this target,
-      // plus a burst if security has already drifted above the band.
+      // Weaken sizing. The cost of under-provisioning is not linear: security drift is a positive
+      // feedback loop that pins hackDifficulty at 100, where hackChance is 0 and EVERY op pays the
+      // 25% failure tier -- a 4x loss. Over-provisioning costs exactly its thread share. So the
+      // asymmetry says: over-provision. Modelled need x SAFETY, floored at WEAKEN_PCT of the fleet.
       const mtn = maxThreadNeeded(t.pct);
       const hackInst = Math.max(1, st.hackInst);
       const secGain =
         hackSecPerSec(hackInst, st.hackThreads / hackInst, mtn, t.hackTimeMs) +
         growSecPerSec(Math.max(1, st.growInst), GROW_THREADS, t.hackTimeMs);
-      let wantWeaken = weakenThreadsFor(secGain, t.hackTimeMs);
-      if (st.drift > BAND) {
-        // clear the accumulated drift within one weaken cycle, on top of steady state
-        wantWeaken += Math.ceil(st.drift / 0.05);
-      }
-      wantWeaken = Math.max(0, wantWeaken - st.weakenThreads);
-      // spread the remaining need over the hosts we have not visited yet
-      const share = Math.ceil(wantWeaken / Math.max(1, rooted.length - hostIdx));
+      const hostThreads = Math.floor(gb / ram.hack);
+      let wantWeaken = Math.max(
+        SAFETY * weakenThreadsFor(secGain, t.hackTimeMs),
+        Math.ceil((hostThreads + st.hackThreads) * (WEAKEN_PCT / 100)),
+      );
+      // Clear any accumulated drift in ONE weaken cycle, on top of steady state.
+      if (st.drift > 0.05) wantWeaken += Math.ceil(st.drift / 0.05);
+      wantWeaken = Math.max(0, Math.ceil(wantWeaken) - st.weakenThreads);
+      // Take the whole remaining need here if it fits -- dribbling it across hosts (the old
+      // ceil(need / hostsLeft) share) is how the feedback loop got a head start.
+      const share = wantWeaken;
 
       // In --no-hack baseline mode the "fill" role is grow, so price the fill at grow's RAM.
       const rp = USE_HACK ? ram : { ...ram, hack: ram.grow };
@@ -249,6 +280,27 @@ export async function main(ns) {
       if (any) placedHosts++;
     });
 
+    // --- emergency: security pinned and no RAM free to fix it ------------------------
+    // Once hackDifficulty saturates, every op is in the 25% tier and the fleet is worth LESS than
+    // a grow farm. Killing a hack instance to fund weaken is strictly better than waiting.
+    for (const t of targets) {
+      const st = state.get(t.host);
+      if (st.drift <= BAND * 5 || st.weakenThreads > st.hackThreads * (WEAKEN_PCT / 100)) continue;
+      let victim = null;
+      for (const h of rooted) {
+        for (const p of ns.ps(h)) {
+          if (p.filename === HACK && p.args[0] === t.host && (!victim || p.threads > victim.threads)) {
+            victim = { pid: p.pid, host: h, threads: p.threads };
+          }
+        }
+      }
+      if (victim) {
+        ns.kill(victim.pid);
+        ns.print(`  ! ${t.host} security pinned (+${st.drift.toFixed(1)}) -- killed ${victim.threads}t ` +
+                 `hack on ${victim.host} to fund weaken; it will be re-placed once security is at min`);
+      }
+    }
+
     // --- report -------------------------------------------------------------------
     const nowXp = ns.getPlayer().exp.hacking || 0;
     const secs = Math.max(1, (Date.now() - t0) / 1000);
@@ -270,7 +322,8 @@ export async function main(ns) {
         `  hack ${st.hackThreads}t/${st.hackInst}i  grow ${st.growThreads}t/${st.growInst}i` +
         `  weak ${st.weakenThreads}t` +
         `  ht ${(t.hackTimeMs / 1000).toFixed(2)}s  mtn ${mtn}  chance ${(t.chance * 100).toFixed(0)}%` +
-        `  moneyUp~${(mUp * 100).toFixed(0)}%  rel ${est.toFixed(0)}`);
+        `  moneyUp~${(mUp * 100).toFixed(0)}%  tier ${(0.25 + 0.75 * t.chance * mUp).toFixed(2)}` +
+        `  rel ${est.toFixed(0)}`);
     }
     ns.clearLog();
     for (const l of lines) ns.print(l);

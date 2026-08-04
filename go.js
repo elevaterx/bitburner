@@ -65,8 +65,15 @@ export async function main(ns) {
     writeStatus(ns, "go", { line: "playing " + opponent + goRecord(ns, opponent) + "  " + cfg.iters + "it" });
 
     let moves = 0, mvN = 0, itSum = 0, msSum = 0, fb = 0;   // per-game MCTS diagnostics
+    // Derive the safety cap from the ACTUAL board, never from the requested `size`. The hidden
+    // opponent forces 19x19 internally (boardState.ts:26-30) whatever size we ask for, so a
+    // size-derived cap aborts a real game mid-play. That is NOT cosmetic: abandoning a game means
+    // the next resetBoardState calls resetWinstreak(ai, false) -- losses++ with ZERO nodePower,
+    // because endGoGame never runs. The whole reward for the game is silently thrown away.
+    let moveCap = size * size * 4;
     while (true) {
       const board = ns.go.getBoardState();
+      moveCap = board.length * board.length * 4;
       const valid = ns.go.analysis.getValidMoves();
       const _t0 = Date.now(), _stats = {};
       let move = mctsMove(board, { komi, iterations: Number(cfg.iters), rng: Math.random, now: () => Date.now(), deadline: Date.now() + Number(cfg.budget), stats: _stats });
@@ -82,7 +89,7 @@ export async function main(ns) {
       if (!res || res.type === "gameOver") break;
       if (!move && res.type === "pass") break;   // both sides passed -> game ends
       moves++;
-      if (moves > size * size * 4) break;         // safety: never loop forever on a stuck board
+      if (moves > moveCap) break;                 // safety: never loop forever on a stuck board
     }
 
     const gs = ns.go.getGameState();
