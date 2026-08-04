@@ -550,7 +550,14 @@ export async function main(ns) {
             const raw = ns.read("gang-data.txt");
             if (raw && raw.length > 0) gRead = JSON.parse(raw);
         } catch (e) {}
-        if (gRead && Array.isArray(gRead.members)) {
+        if (!gRead || !Array.isArray(gRead.members)) {
+            // NEVER skip silently. An absent section is indistinguishable from a section that has
+            // nothing to say, and the reader cannot tell which script is at fault. The whole point of
+            // this snapshot is that a missing thing SAYS it is missing -- same reason augstat's row
+            // cap and the panel's ghost-status check exist.
+            lines.push("GANG: (no gang-data.txt -- gang.js not running, or running a build older than"
+                + " the one that emits it. Restart gang.js.)");
+        } else {
             const gage = Math.floor((Date.now() - (gRead.ts || 0)) / 1000);
             lines.push("GANG  " + gRead.faction + " (" + (gRead.isHacking ? "hacking" : "combat") + ")  "
                 + gRead.members.length + " members  " + gRead.objective
