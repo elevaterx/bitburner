@@ -31,7 +31,7 @@ export async function main(ns) {
     "xp.js", "xpfarm.js", "xph.js", "xpg.js", "sh.js", "shareall.js",
     "diagnose-income.js", "earners.js", "backdoors.js",
     "ramstat.js", "sing.js", "hacknet.js", "digrank.js",
-    "hud1.js", "hud2.js", "cloudstat.js", "fatcheck.js",
+    "hud1.js", "hud2.js", "snap.js", "cloudstat.js", "fatcheck.js",
     "winlayout.js", "arrange.js", "goto.js",
     // --- HWGW batcher ---
     "batch-math.js", "batch-live.js", "sharecap.js",

@@ -43,7 +43,9 @@ export async function main(ns) {
     //     run boot.js 1000 0 repgrind      -> rep grind: share cap 1000, coord 'repgrind'
     //     run boot.js 0 0.5 rebuild        -> post-install rebuild: no share, purchaser on, coord 'rebuild'
     const SHARE_CAP      = ns.args[0] !== undefined ? Number(ns.args[0]) : 0;        // 0 = NO share (default)
-    const SHARE_HOME_RES = 4096;          // GB of home RAM sharecap must leave free (so it can't eat home)
+    // GB of home RAM sharecap must leave free. Clamped to half of home: the literal 4096 exceeds
+    // the entire 32GB home you get after a BitNode reset, which would reserve more than exists.
+    const SHARE_HOME_RES = Math.min(4096, Math.floor(ns.getServerMaxRam("home") / 2));
     const PURCHASER_FRAC = ns.args[1] !== undefined ? Number(ns.args[1]) : 0;        // 0 = purchaser off
     const COORD_PRESET   = ns.args[2] !== undefined ? String(ns.args[2]) : "income"; // coord scenario preset
     const PURCHASER_RES  = 500_000;   // purchaser cash floor (only used if purchaser enabled)
@@ -99,6 +101,16 @@ export async function main(ns) {
         await ns.sleep(SETTLE_MS);   // let sharecap deploy its workers before coord scans the pool
     }
 
+    // ---- 3b. capability managers, BEFORE coordinator. Same boot-order constraint sharecap has:
+    //          coord greedily fills all free RAM and won't yield it back once placed, so anything
+    //          launched after it gets nothing. On a post-BitNode 32GB home (Prestige.ts:242-248)
+    //          that is the difference between the gang manager running and never starting at all --
+    //          and in BN2 the gang IS the economy, not a late-game extra. Each self-gates, so
+    //          launching unconditionally costs nothing where its API is absent.
+    //          panel.js goes first: it is the cheapest control surface (~6GB) and hud1 (39GB)
+    //          cannot run at all until home is upgraded. ----
+    await launchManagers(ns, log);
+
     // ---- 4. coordinator: farm brain. Takes whatever pool remains after sharecap.
     //         SKIPPED in a stocks-only node -- the farm earns $0 there and would just
     //         eat the pool. Income in those nodes is the stock market (run the trader). ----
@@ -129,24 +141,35 @@ export async function main(ns) {
         log(pid ? "hud1.js up" : "hud1.js FAILED");
     }
 
-    // ---- 6. late-game managers: gang + sleeves. Each SELF-GATES (exits immediately if its API
-    //         isn't available in this node), so launching unconditionally is safe -- and they earn
-    //         independently of the hacking farm, so we run them even in a dead-hack node. Guarded
-    //         so a re-boot never double-launches. ----
-    for (const f of ["gang.js", "sleeves.js", "bladeburner.js", "corp.js", "panel.js"]) {
-        let up = false;
-        for (const p of ns.ps("home")) if (p.filename === f) { up = true; break; }
-        if (up) { log(f + " already running -- left as-is"); continue; }
-        pid = ns.run(f);
-        log(pid ? (f + " up (self-gates if unavailable)") : (f + " not started -- check RAM"));
-        await ns.sleep(200);
-    }
 
     log("bootstrap complete. " + (farmMode ? "" : "[STOCKS-ONLY node: farm off] ") +
         (SHARE_CAP <= 0 ? "(no share) " : "share cap " + SHARE_CAP + "t ") +
         (PURCHASER_FRAC > 0 && farmMode ? "+ purchaser " + PURCHASER_FRAC + " " : "+ no purchaser ") +
         (farmMode ? "-- watch coord log for harvest growth. " : "-- run the trader for income. ") +
         "Launch hud2 manually for faction/aug state.");
+}
+
+/** Launch the self-gating capability managers, cheapest control surface first.
+ *  Reports the actual RAM shortfall rather than "check RAM" -- on a fresh BitNode home the
+ *  interesting question is always "by how much", since that decides whether to buy RAM or to
+ *  shed a script. */
+async function launchManagers(ns, log) {
+    const freeHome = () => ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+    for (const f of ["panel.js", "gang.js", "sleeves.js", "bladeburner.js", "corp.js"]) {
+        let up = false;
+        for (const p of ns.ps("home")) if (p.filename === f) { up = true; break; }
+        if (up) { log(f + " already running -- left as-is"); continue; }
+        const pid = ns.run(f);
+        if (pid) {
+            log(f + " up (self-gates if unavailable)");
+        } else {
+            let need = 0; try { need = ns.getScriptRam(f, "home"); } catch (e) {}
+            const free = freeHome();
+            log(f + " NOT started -- needs " + need.toFixed(1) + "GB, " + free.toFixed(1) + "GB free"
+                + (need > ns.getServerMaxRam("home") ? " (exceeds total home RAM -- upgrade required)" : ""));
+        }
+        await ns.sleep(200);
+    }
 }
 
 // BFS the network from home, returning all reachable hosts (incl. home).
