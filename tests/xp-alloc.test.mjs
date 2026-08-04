@@ -183,3 +183,33 @@ test("realistic BN9 plan: an all-hack fleet with support beats the old grow-only
   assert.ok(newXp / oldXp > 3.0, `expected >3x, got ${(newXp / oldXp).toFixed(2)}x`);
   assert.ok(newXp / oldXp < 4.0, `implausibly high: ${(newXp / oldXp).toFixed(2)}x`);
 });
+
+test("rankTargets honours an op-time floor: below it, only baseDifficulty still pays", () => {
+  // ns.hack resolves via window.setTimeout, so nominal times under the practical scheduling
+  // floor do not convert into more ops/sec. XP per op is (3 + 0.3*baseDifficulty) and is
+  // independent of op time -- so under the floor the higher-difficulty server must win.
+  const FLOOR = 150;
+  const cands = [
+    { host: "foodnstuff", baseDifficulty: 10, hackTimeMs: 70,  chance: 1 },
+    { host: "midrange",   baseDifficulty: 30, hackTimeMs: 140, chance: 1 },
+  ].map((c) => ({ ...c, rankTimeMs: Math.max(c.hackTimeMs, FLOOR) }));
+
+  // unfloored, the fast low-difficulty server wins: 6.0/0.07 = 85.7 vs 12.0/0.14 = 85.7 -- a tie
+  // that tips to whichever is marginally faster, which is exactly the trap.
+  const naive = rankTargets(cands.map(({ rankTimeMs, ...c }) => c));
+  assert.equal(naive[0].host, "foodnstuff");
+
+  // floored, both are capped at the same real cadence, so 2x the XP per op wins outright
+  const floored = rankTargets(cands);
+  assert.equal(floored[0].host, "midrange");
+  assert.ok(floored[0].rate / floored[1].rate > 1.9);
+});
+
+test("the op-time floor never penalises a target already slower than the floor", () => {
+  const cands = [
+    { host: "slow", baseDifficulty: 99, hackTimeMs: 40000, chance: 1, rankTimeMs: 40000 },
+    { host: "fast", baseDifficulty: 10, hackTimeMs: 70, chance: 1, rankTimeMs: 150 },
+  ];
+  const r = rankTargets(cands);
+  assert.equal(r[0].host, "fast");   // 6.0/0.15 = 40 vs 32.7/40 = 0.82
+});

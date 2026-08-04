@@ -87,6 +87,8 @@ export async function main(ns) {
   const WEAKEN_PCT = Math.max(0, Number(flag("weaken-pct", 3)));   // hard floor, % of fleet
   // Minimum share of total RAM a host must hold before it is allowed to run HACK workers.
   const HACK_MIN_SHARE = Math.max(0, Number(flag("hack-min-share", 1))) / 100;
+  // Practical floor on how fast an op can actually turn around, in ms. See rankTargets.
+  const MIN_OP_MS = Math.max(0, Number(flag("min-op-ms", 150)));
   const SAFETY = Math.max(1, Number(flag("safety", 4)));           // multiplier on modelled need
   const LOOP_MS = Math.max(2000, Number(flag("loop", 10000)) || 10000);
   const USE_HACK = !has("no-hack");
@@ -126,7 +128,8 @@ export async function main(ns) {
       cands.push({
         host: h,
         baseDifficulty: ns.getServerBaseSecurityLevel(h),
-        hackTimeMs,
+        hackTimeMs,                                       // real time, for the security math
+        rankTimeMs: Math.max(hackTimeMs, MIN_OP_MS),      // floored time, for ranking only
         chance: USE_HACK ? ns.hackAnalyzeChance(h) : 1,
         pct: USE_HACK ? ns.hackAnalyze(h) : 0,
       });
@@ -152,7 +155,8 @@ export async function main(ns) {
   if (DRY) {
     ns.tprint(header());
     for (const t of targets) {
-      ns.tprint(`  ${t.host}: baseSec ${t.baseDifficulty}  hackTime ${(t.hackTimeMs / 1000).toFixed(2)}s  ` +
+      ns.tprint(`  ${t.host}: baseSec ${t.baseDifficulty}  hackTime ${(t.hackTimeMs / 1000).toFixed(3)}s  ` +
+                `(ranked at ${(t.rankTimeMs / 1000).toFixed(3)}s)  xp/op ${(3 + 0.3 * t.baseDifficulty).toFixed(1)}  ` +
                 `chance ${(t.chance * 100).toFixed(1)}%  maxThreadNeeded ${maxThreadNeeded(t.pct)}  ` +
                 `rate ${t.rate.toFixed(3)} xp/thread-s`);
     }
