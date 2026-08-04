@@ -96,3 +96,30 @@ test("DEFAULT_WEIGHTS: the three gate-driving stats carry full weight", () => {
   assert.equal(DEFAULT_WEIGHTS.hacking_exp, 1);
   assert.equal(DEFAULT_WEIGHTS.faction_rep, 1);
 });
+
+test("selectRound: marginal cutoff drops augs whose realized price outruns their value", () => {
+  // Live case. Synaptic Enhancement Implant has the best BASE density of the lot, but lands in the
+  // last slot where it costs $670m for log-value 0.015 -- 15x worse $/value than the round's first
+  // buy. It must be deferred, not bought.
+  const cands = [
+    { aug: "ADR-V2", base: 0.550, value: augValue({ faction_rep: 1.20 }) },
+    { aug: "Shadow", base: 0.400, value: augValue({ faction_rep: 1.15 }) },
+    { aug: "Neural-Retention", base: 0.250, value: augValue({ hacking_exp: 1.25 }) },
+    { aug: "CRTX42-AA", base: 0.225, value: augValue({ hacking: 1.08, hacking_exp: 1.15 }) },
+    { aug: "ASP", base: 0.080, value: augValue({ hacking_exp: 1.05, hacking_speed: 1.02, hacking_chance: 1.05 }) },
+    { aug: "S.N.A", base: 0.030, value: augValue({ faction_rep: 1.15 }) },
+    { aug: "ADR-V1", base: 0.0175, value: augValue({ faction_rep: 1.10 }) },
+    { aug: "Synaptic Enh", base: 0.0075, value: augValue({ hacking_speed: 1.03 }) },
+  ];
+  const picked = selectRound(cands, 8.10).map((c) => c.aug);
+  assert.ok(!picked.includes("Synaptic Enh"), "$670m for hacking_speed 1.03 must be deferred");
+  assert.ok(picked.includes("ADR-V2") && picked.includes("Neural-Retention"));
+  // and the cutoff is tunable -- a permissive one lets the tail back in
+  const loose = selectRound(cands, 8.10, { valueCutoff: 1e9 }).map((c) => c.aug);
+  assert.ok(loose.includes("Synaptic Enh"));
+});
+
+test("selectRound: cutoff never rejects the first buy (nothing to compare against)", () => {
+  const only = [{ aug: "solo", base: 5, value: 0.0001 }];
+  assert.deepEqual(selectRound(only, 100).map((c) => c.aug), ["solo"]);
+});

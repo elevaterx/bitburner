@@ -15,6 +15,9 @@
  *    donate      buy missing rep via donation (favor >= 150 only) -- can cost trillions+
  *    all         include non-hacking augs too (for the Daedalus 30-aug count)
  *    nfg         also buy NeuroFlux Governor levels (expensive; buy deliberately)
+ *    --cutoff K  drop an aug whose realized $/value is worse than K x the round's best buy
+ *                (default 10). Guards the tail of a long round, where the 1.9^slot escalation
+ *                makes a cheap aug cost more than it is worth deferring one install.
  *    --budget N  plan against N dollars instead of your CASH. Your buying power is usually net
  *                worth, not cash -- the trader keeps ~90% of it in open positions -- so a plan
  *                built on cash alone badly understates the round. Pass your net worth to see the
@@ -26,7 +29,7 @@
  *  continuously (kill xpfarm briefly if home is tight). Excludes "The Red Pill" (node-exit;
  *  install that deliberately as the last step). Does NOT install -- you install when ready.
  *  Must be in pull.js. @param {NS} ns */
-import { augValue, selectRound, roundCost } from "./lib/aug-plan.js";
+import { augValue, selectRound, roundCost, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -36,6 +39,9 @@ export async function main(ns) {
     const NFG    = ns.args.includes("nfg");
     const bIdx   = ns.args.indexOf("--budget");
     const BUDGET_ARG = bIdx >= 0 ? Number(ns.args[bIdx + 1]) : NaN;
+    const cIdx   = ns.args.indexOf("--cutoff");
+    const CUTOFF = cIdx >= 0 && Number.isFinite(Number(ns.args[cIdx + 1]))
+        ? Number(ns.args[cIdx + 1]) : DEFAULT_VALUE_CUTOFF;
     const S = ns.singularity;
     const NFG_NAME = "NeuroFlux Governor", REDPILL = "The Red Pill";
 
@@ -93,7 +99,7 @@ export async function main(ns) {
     // fall back to the whole buyable set, ordered cheapest-for-the-basket.
     const list = DONATE
         ? buyable.sort((a, b) => (b.base - a.base) || (a.repReq - b.repReq))
-        : selectRound(affordableByRep, budget);
+        : selectRound(affordableByRep, budget, { valueCutoff: CUTOFF });
     const planCost = DONATE ? null : roundCost(list.map(c => c.base));
 
     const bought = [], blockedRep = [], blockedMoney = [];
@@ -130,6 +136,13 @@ export async function main(ns) {
         if (planCost !== null && planCost > money0) {
             ns.tprint("LIQUIDATE FIRST: this plan needs $" + fmt(planCost) + " but you hold $" + fmt(money0)
                 + " in cash. Panel -> Trader -> SELL ALL, then re-run.");
+            // Without this the next line reads as a recommendation, and it isn't. The buy loop stops
+            // at real cash, so what follows is the affordable PREFIX of a plan built for a bigger
+            // budget -- which is NOT the best basket for the cash on hand. Those are different
+            // optimisations: a big budget picks big-ticket augs for slot 0, a small one picks cheap
+            // high-multiplier augs. Re-run without --budget to see the right plan for your cash.
+            ns.tprint("  (the list below is only the part you can afford NOW, not an optimal plan for"
+                + " $" + fmt(money0) + " -- re-run without --budget for that)");
         }
     }
     ns.tprint((DO_BUY ? "bought " : "would buy ") + bought.length + " aug(s)  |  money $" + fmt(spent - donated)
