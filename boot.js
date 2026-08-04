@@ -154,19 +154,42 @@ export async function main(ns) {
  *  interesting question is always "by how much", since that decides whether to buy RAM or to
  *  shed a script. */
 async function launchManagers(ns, log) {
-    const freeHome = () => ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+    const free = (h) => ns.getServerMaxRam(h) - ns.getServerUsedRam(h);
+    // Rooted hosts with real RAM, biggest free first. The gang / sleeve / bladeburner / corp and
+    // Singularity APIs are NOT home-only -- they work from any server -- so a manager that doesn't
+    // fit on a post-BitNode 32GB home can still run on the network. Skip hacknet servers: running
+    // scripts on one cuts its hash rate.
+    const pool = () => bfs(ns)
+        .filter((h) => h !== "home" && !h.startsWith("hacknet-") && ns.hasRootAccess(h) && ns.getServerMaxRam(h) > 0)
+        .sort((a, b) => free(b) - free(a));
+
     for (const f of ["panel.js", "gang.js", "sleeves.js", "bladeburner.js", "corp.js"]) {
+        // already running ANYWHERE, not just on home
         let up = false;
-        for (const p of ns.ps("home")) if (p.filename === f) { up = true; break; }
+        for (const h of bfs(ns)) { if (ns.ps(h).some((p) => p.filename === f)) { up = true; break; } }
         if (up) { log(f + " already running -- left as-is"); continue; }
-        const pid = ns.run(f);
+
+        let need = 0; try { need = ns.getScriptRam(f, "home"); } catch (e) {}
+        if (!need) { log(f + " NOT started -- script not found (run update.js?)"); continue; }
+
+        // home first (cheapest to reason about), then the roomiest rooted host
+        let pid = free("home") >= need ? ns.run(f) : 0;
+        let where = "home";
+        if (!pid) {
+            for (const h of pool()) {
+                if (free(h) < need) break;              // sorted, so nothing later fits either
+                if (!ns.scp(f, h, "home")) continue;
+                pid = ns.exec(f, h);
+                if (pid) { where = h; break; }
+            }
+        }
         if (pid) {
-            log(f + " up (self-gates if unavailable)");
+            log(f + " up on " + where + " (" + need.toFixed(1) + "GB, self-gates if unavailable)");
         } else {
-            let need = 0; try { need = ns.getScriptRam(f, "home"); } catch (e) {}
-            const free = freeHome();
-            log(f + " NOT started -- needs " + need.toFixed(1) + "GB, " + free.toFixed(1) + "GB free"
-                + (need > ns.getServerMaxRam("home") ? " (exceeds total home RAM -- upgrade required)" : ""));
+            const best = pool()[0];
+            log(f + " NOT started -- needs " + need.toFixed(1) + "GB; home has "
+                + free("home").toFixed(1) + "GB free, best network host "
+                + (best ? best + " has " + free(best).toFixed(1) + "GB" : "none rooted yet"));
         }
         await ns.sleep(200);
     }

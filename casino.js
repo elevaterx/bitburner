@@ -30,7 +30,13 @@ export async function main(ns) {
     const win = eval("window");
     const TARGET   = Number(ns.args[0]) || 10e9;    // default to the casino's ~$10b cap; ramp makes the full climb quick
     const BET_FRAC = 0.90;                           // ramp: bet this frac of bankroll each hand (save-scummed)
-    const MAX_BET  = 1e8, MIN_BET = 1e6;             // blackjack table limits ($100m max, $1m min)
+    // Blackjack limits, verified against v3.0.2 source. MAX is real: Casino/Blackjack.tsx:16
+    // `const maxBet = 100e6`. There is NO table MINIMUM -- BetInput.tsx:25-58 rejects a wager only
+    // when it is NaN, <= 0, or above maxBet (that last case is silently clamped, not refused).
+    // This was previously 1e6 with a comment asserting a "$1m min" that does not exist in the game,
+    // and the guard below then refused to play at all with a bankroll under $1m -- i.e. exactly the
+    // cold-start case the casino bootstrap exists to solve.
+    const MAX_BET  = 1e8, MIN_BET = 1;
     const NOSCUM   = ns.args.includes("noscum");
     const SOLO     = ns.args.includes("solo");       // kill the stack so it doesn't fight for the player action
     const log = (m) => ns.print(m);
@@ -62,7 +68,7 @@ export async function main(ns) {
     while (ns.getPlayer().money < TARGET) {
         const m0 = ns.getPlayer().money;
         // can't make the table minimum -> casino can't help; exit instead of looping on rejected bets
-        if (m0 < MIN_BET) { ns.tprint("casino: $" + dm(m0) + " is below the $" + (MIN_BET / 1e6) + "m table minimum -- need seed cash first. Stopping."); return; }
+        if (m0 < MIN_BET) { ns.tprint("casino: broke ($" + m0.toFixed(0) + ") -- nothing to wager. Stopping."); return; }
         const bet = Math.min(Math.max(m0 * BET_FRAC, MIN_BET), MAX_BET, m0);   // never wager more than you actually hold
         const ok = await playHand(ns, inst, bet, log);
         if (!ok) {

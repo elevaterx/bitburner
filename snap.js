@@ -52,13 +52,20 @@ export async function main(ns) {
   let rooted = 0, contracts = 0;
   let homeMax = 0, homeUsed = 0, netMax = 0, netUsed = 0, netCount = 0;
   const byScript = new Map();
+  let bestFree = 0, bestHost = null;   // roomiest single rooted host -- what a big manager can use
   for (const h of hosts) {
     const root = ns.hasRootAccess(h);
     if (root) rooted++;
     try { contracts += ns.ls(h, ".cct").length; } catch (e) {}
     const max = ns.getServerMaxRam(h), used = ns.getServerUsedRam(h);
     if (h === "home") { homeMax = max; homeUsed = used; }
-    else if (max > 0) { netMax += max; netUsed += used; netCount++; }
+    // Only ROOTED hosts are usable capacity. Counting the rest inflates the figure into
+    // something you cannot actually spend -- and hacknet servers lose hash rate if scripted.
+    else if (max > 0 && root && !h.startsWith("hacknet-")) {
+      netMax += max; netUsed += used; netCount++;
+      const f = max - used;
+      if (f > bestFree) { bestFree = f; bestHost = h; }
+    }
     for (const proc of ns.ps(h)) {
       const e = byScript.get(proc.filename) || { threads: 0, gb: 0 };
       e.threads += proc.threads;
@@ -69,7 +76,8 @@ export async function main(ns) {
   L.push(`rooted ${rooted}/${hosts.length}  contracts ${contracts}`);
   L.push(`RAM  home ${fmtRam(homeUsed)}/${fmtRam(homeMax)}` +
          `  (free ${fmtRam(Math.max(0, homeMax - homeUsed))})` +
-         `   network ${fmtRam(netUsed)}/${fmtRam(netMax)} (${netCount} srv)`);
+         `   network ${fmtRam(netUsed)}/${fmtRam(netMax)} (${netCount} rooted)` +
+         (bestHost ? `   roomiest ${bestHost} ${fmtRam(bestFree)} free` : ""));
 
   // --- what is actually running --------------------------------------------
   L.push("SCRIPTS");
