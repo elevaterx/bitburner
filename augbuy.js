@@ -29,7 +29,7 @@
  *  continuously (kill xpfarm briefly if home is tight). Excludes "The Red Pill" (node-exit;
  *  install that deliberately as the last step). Does NOT install -- you install when ready.
  *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
-import { augValue, selectRound, roundCost, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
+import { augValue, selectRound, roundCost, nodeWeights, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -50,6 +50,19 @@ export async function main(ns) {
 
     const have = new Set(S.getOwnedAugmentations(true));    // purchased + queued + installed -> "already have"
     const installed = new Set(S.getOwnedAugmentations(false)); // installed only -> for prereq checks
+
+    // NODE-AWARE WEIGHTS. Whether a hacking_money multiplier is worth anything depends on the node
+    // (ScriptHackMoneyGain x ServerMaxMoney) AND on whether a farm is actually running. Both are
+    // read live rather than assumed: getBitNodeMultipliers is already paid for below, and ns.ps is
+    // 0.2GB. In BN2 the node alone scores 0.08, so even with the farm up these barely register.
+    let bnm = null; try { bnm = ns.getBitNodeMultipliers(); } catch (e) {}
+    let farmRunning = false;
+    try { farmRunning = ns.ps("home").some(p => p.filename === "coordinator.js"); } catch (e) {}
+    const WEIGHTS = nodeWeights({
+        scriptHackMoneyGain: bnm && bnm.ScriptHackMoneyGain,
+        serverMaxMoney: bnm && bnm.ServerMaxMoney,
+        moneyFarmRunning: farmRunning,
+    });
 
     const isHackingAug = (aug) => {
         try {
@@ -75,7 +88,7 @@ export async function main(ns) {
                 try { base = S.getAugmentationBasePrice(aug); } catch (e) { base = 0; }
                 try { stats = S.getAugmentationStats(aug); } catch (e) { stats = {}; }
                 cand.set(aug, {
-                    aug, faction: f, _rep: rep, base, value: augValue(stats),
+                    aug, faction: f, _rep: rep, base, value: augValue(stats, WEIGHTS),
                     repReq: S.getAugmentationRepReq(aug), prereqs: S.getAugmentationPrereq(aug),
                 });
             }
@@ -131,6 +144,9 @@ export async function main(ns) {
     // ---- report ----
     ns.tprint("=== augbuy " + (DO_BUY ? "(PURCHASED)" : "(DRY RUN -- add 'buy' to commit)") + " ===");
     if (!DONATE) {
+        ns.tprint("weights: money-farm mults x" + (WEIGHTS.hacking_money / 0.5).toFixed(2)
+            + "  (node " + (bnm ? ((bnm.ScriptHackMoneyGain ?? 1) * (bnm.ServerMaxMoney ?? 1)).toFixed(2) : "?")
+            + ", coordinator " + (farmRunning ? "running" : "STOPPED") + ")");
         ns.tprint("budget $" + fmt(budget) + (Number.isFinite(BUDGET_ARG) && BUDGET_ARG > 0
             ? "  (--budget; your CASH is $" + fmt(money0) + ")" : "  (cash -- pass --budget <net worth> to plan against positions too)"));
         if (planCost !== null && planCost > money0) {

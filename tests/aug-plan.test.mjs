@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  AUG_PRICE_MULT, DEFAULT_WEIGHTS, augValue, valueDensity, roundCost, selectRound,
+  AUG_PRICE_MULT, DEFAULT_WEIGHTS, BASE_WEIGHTS, augValue, valueDensity, roundCost, selectRound,
+  moneyFarmWeight, nodeWeights,
 } from "../lib/aug-plan.js";
 
 test("augValue: weighted log-sum, ignores mults <= 1 and unknown keys", () => {
@@ -122,4 +123,47 @@ test("selectRound: marginal cutoff drops augs whose realized price outruns their
 test("selectRound: cutoff never rejects the first buy (nothing to compare against)", () => {
   const only = [{ aug: "solo", base: 5, value: 0.0001 }];
   assert.deepEqual(selectRound(only, 100).map((c) => c.aug), ["solo"]);
+});
+
+test("moneyFarmWeight: both gates must pass -- node capability AND an actual farm", () => {
+  assert.equal(moneyFarmWeight(1, false), 0);       // farm stopped -> worthless whatever the node
+  assert.equal(moneyFarmWeight(0, true), 0);        // BN8: ScriptHackMoneyGain 0
+  assert.equal(moneyFarmWeight(0.01, true), 0.01);  // BN9: ServerMaxMoney 0.01
+  assert.ok(Math.abs(moneyFarmWeight(0.08, true) - 0.08) < 1e-12);   // BN2
+  assert.equal(moneyFarmWeight(1, true), 1);        // BN1 vanilla
+  assert.equal(moneyFarmWeight(5, true), 1);        // capped -- a rich node is not worth >full weight
+  assert.equal(moneyFarmWeight(NaN, true), 0);
+});
+
+test("nodeWeights: scales only the money-farm mults, never the gate-driving ones", () => {
+  const stopped = nodeWeights({ scriptHackMoneyGain: 1, serverMaxMoney: 1, moneyFarmRunning: false });
+  assert.equal(stopped.hacking_money, 0);
+  assert.equal(stopped.hacking_grow, 0);
+  // speed and chance survive: they drive XP/sec and the 25% failure tier, not money
+  assert.equal(stopped.hacking_speed, BASE_WEIGHTS.hacking_speed);
+  assert.equal(stopped.hacking_chance, BASE_WEIGHTS.hacking_chance);
+  assert.equal(stopped.hacking, 1);
+  assert.equal(stopped.faction_rep, 1);
+
+  // BN2 with the farm UP still scores money mults near zero on the node's own terms
+  const bn2 = nodeWeights({ scriptHackMoneyGain: 1, serverMaxMoney: 0.08, moneyFarmRunning: true });
+  assert.ok(Math.abs(bn2.hacking_money - 0.04) < 1e-12);
+
+  // unknown node mults degrade to "assume the node allows it" and let activity decide
+  const unknown = nodeWeights({ moneyFarmRunning: true });
+  assert.equal(unknown.hacking_money, BASE_WEIGHTS.hacking_money);
+});
+
+test("node awareness reproduces the live DataJack case", () => {
+  // BN2, coordinator stopped -> DataJack (hacking_money 1.25) scores 0 and is not selected.
+  const w = nodeWeights({ scriptHackMoneyGain: 1, serverMaxMoney: 0.08, moneyFarmRunning: false });
+  assert.equal(augValue({ hacking_money: 1.25 }, w), 0);
+  const cands = [
+    { aug: "ADR-V2", base: 0.550, value: augValue({ faction_rep: 1.20 }, w) },
+    { aug: "DataJack", base: 0.450, value: augValue({ hacking_money: 1.25 }, w) },
+  ];
+  assert.deepEqual(selectRound(cands, 100).map((c) => c.aug), ["ADR-V2"]);
+  // restart the farm in a node that rewards it and DataJack comes back
+  const w2 = nodeWeights({ scriptHackMoneyGain: 1, serverMaxMoney: 1, moneyFarmRunning: true });
+  assert.ok(augValue({ hacking_money: 1.25 }, w2) > 0);
 });
