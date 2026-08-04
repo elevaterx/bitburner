@@ -50,9 +50,18 @@ export async function main(ns) {
                     ns.toast(pid ? "xpfarm.js launched (floods XP workers; kills money farm, leaves trader)" : "xpfarm.js not found", pid ? "success" : "error", 3000);
                 } else if (action === "killxp") {
                     ns.scriptKill("xpfarm.js", "home");
+                    // Every XP worker filename, or "kill xp" leaves an orphaned fleet running:
+                    // xp.js is the legacy grow/weaken worker; xph/xpg/xpw are the hack-based farm's
+                    // roles. xpw.js is also coordinator.js's Phase-2 XP filler -- killing it here is
+                    // intended, it is an XP worker either way.
+                    const XPW = ["xp.js", "xph.js", "xpg.js", "xpw.js"];
                     let k = 0; const seen = new Set(["home"]), q = ["home"];
-                    while (q.length) { const c = q.shift(); if (ns.scriptKill("xp.js", c)) k++; for (const n of ns.scan(c)) if (!seen.has(n)) { seen.add(n); q.push(n); } }
-                    ns.toast("stopped xpfarm + xp workers (" + k + " hosts)", "success", 2500);
+                    while (q.length) {
+                        const c = q.shift();
+                        for (const w of XPW) if (ns.scriptKill(w, c)) k++;
+                        for (const n of ns.scan(c)) if (!seen.has(n)) { seen.add(n); q.push(n); }
+                    }
+                    ns.toast("stopped xpfarm + xp workers (" + k + " host/script pairs)", "success", 2500);
                 } else if (action === "restart") {
                     let cargs = [];
                     for (const p of ns.ps("home")) if (p.filename === "coordinator.js") { cargs = p.args; break; }

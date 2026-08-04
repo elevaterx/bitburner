@@ -40,6 +40,7 @@
  *  @param {NS} ns */
 
 import { bfs, rootHost, freeRam } from "./lib/net.js";
+import { num, money } from "./lib/fmt.js";
 import {
   rankTargets, maxThreadNeeded, hackSecPerSec, growSecPerSec, weakenThreadsFor,
   moneyUpFraction, planHost, staggerMs, planXpPerSec, GROW_TIME_MULT, WEAKEN_TIME_MULT,
@@ -253,8 +254,8 @@ export async function main(ns) {
     const secs = Math.max(1, (Date.now() - t0) / 1000);
     const gained = nowXp - startXp;
     const lines = [header()];
-    lines.push(`  L${level()} (+${level() - startLvl})   XP +${ns.formatNumber(gained, 2)}   ` +
-               `${ns.formatNumber(gained / secs, 2)} xp/s since start` +
+    lines.push(`  L${level()} (+${level() - startLvl})   XP +${num(gained, 2)}   ` +
+               `${num(gained / secs, 2)} xp/s since start` +
                (placed > 0 ? `   (+${placed} threads / ${placedHosts} hosts)` : "   (pool full)"));
     for (const t of targets) {
       const st = state.get(t.host);
@@ -265,7 +266,7 @@ export async function main(ns) {
         1, t.hackTimeMs, t.chance, mUp);
       lines.push(
         `  ${t.host}  sec ${st.sec.toFixed(2)}/${st.min.toFixed(2)}` +
-        `  $${ns.formatNumber(st.money, 1)}/${ns.formatNumber(st.maxMoney, 1)}` +
+        `  ${money(st.money, 1)}/${money(st.maxMoney, 1)}` +
         `  hack ${st.hackThreads}t/${st.hackInst}i  grow ${st.growThreads}t/${st.growInst}i` +
         `  weak ${st.weakenThreads}t` +
         `  ht ${(t.hackTimeMs / 1000).toFixed(2)}s  mtn ${mtn}  chance ${(t.chance * 100).toFixed(0)}%` +
@@ -275,7 +276,7 @@ export async function main(ns) {
     for (const l of lines) ns.print(l);
     try {
       ns.write("status/xpfarm.txt",
-        `xpfarm ${USE_HACK ? "hack" : "grow"}  L${level()}  ${ns.formatNumber(gained / secs, 2)} xp/s  ` +
+        `xpfarm ${USE_HACK ? "hack" : "grow"}  L${level()}  ${num(gained / secs, 2)} xp/s  ` +
         targets.map((t) => {
           const st = state.get(t.host);
           return `${t.host} h${st.hackThreads}/g${st.growThreads}/w${st.weakenThreads} sec+${st.drift.toFixed(1)}`;
