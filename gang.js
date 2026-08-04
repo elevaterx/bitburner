@@ -206,7 +206,12 @@ function manageGang(ns, cfg, flags, vlog) {
   }
 
   // 4. Equipment: buy cheapest-first across all members within a money budget this pass.
-  buyEquipment(ns, g, members, isHacking, Number(flags["equip-frac"]), vlog);
+  //    Catalog is built ONCE here and shared with the data feed below, so the snapshot reports the
+  //    same view of "what's still buyable" that the buyer acts on.
+  const catalog = g.getEquipmentNames().map((n) => ({
+    name: n, cost: g.getEquipmentCost(n), type: g.getEquipmentType(n), stats: g.getEquipmentStats(n),
+  }));
+  buyEquipment(ns, g, members, isHacking, Number(flags["equip-frac"]), vlog, catalog);
 
   // 5. Territory warfare toggle.
   if (!flags["no-warfare"]) {
@@ -221,13 +226,42 @@ function manageGang(ns, cfg, flags, vlog) {
       vlog("territory warfare " + (engage ? "ENGAGED" : "stood down"));
     }
   }
+
+  // 6. Data feed for hud1's snapshot. Everything here comes from calls this pass ALREADY makes, so
+  //    it costs no extra RAM. It exists because the two questions that actually drive gang decisions
+  //    -- "what equipment is still unowned?" and "how fast is faction rep accruing?" -- were being
+  //    answered by clicking through the in-game UI member by member.
+  //    respectGainRate is PER CYCLE (CONSTANTS.MilliPerCycle = 200), so x5 for per-second, which is
+  //    what the game's own GangStats panel displays (GangStats.tsx:59).
+  const fin = g.getGangInformation();
+  const mem = members.map((name) => {
+    const info = infos.get(name);
+    const asc = g.getAscensionResult(name);
+    const miss = equipmentToBuy(info, catalog, isHacking);
+    return {
+      n: name,
+      task: info.task,
+      stat: isHacking ? info.hack : (info.str + info.def + info.dex + info.agi) / 4,
+      resp: info.earnedRespect,
+      asc: asc ? Math.max(...(isHacking ? [asc.hack] : [asc.str, asc.def, asc.dex, asc.agi]).map(Number).filter(Number.isFinite)) : 0,
+      own: (info.upgrades || []).length + (info.augmentations || []).length,
+      miss: miss.length,
+      missCost: miss.reduce((a, e) => a + e.cost, 0),
+    };
+  });
+  ns.write("gang-data.txt", JSON.stringify({
+    ts: Date.now(), faction: fin.faction, isHacking: fin.isHacking, objective,
+    respect: fin.respect, respectPerSec: fin.respectGainRate * 5,
+    wanted: fin.wantedLevel, wantedPerSec: fin.wantedLevelGainRate * 5, penalty: fin.wantedPenalty,
+    territory: fin.territory, war: fin.territoryWarfareEngaged, clash: fin.territoryClashChance,
+    power: fin.power, moneyPerSec: fin.moneyGainRate * 5,
+    equipCostMult: fin.equipmentCostMult,          // 1 / getDiscount()
+    factionRepMult: (ns.getPlayer().mults && ns.getPlayer().mults.faction_rep) || 1,
+    members: mem,
+  }), "w");
 }
 
-function buyEquipment(ns, g, members, isHacking, equipFrac, vlog) {
-  const names = g.getEquipmentNames();
-  const catalog = names.map((n) => ({
-    name: n, cost: g.getEquipmentCost(n), type: g.getEquipmentType(n), stats: g.getEquipmentStats(n),
-  }));
+function buyEquipment(ns, g, members, isHacking, equipFrac, vlog, catalog) {
   let budget = ns.getPlayer().money * equipFrac;
   if (budget <= 0) return;
 

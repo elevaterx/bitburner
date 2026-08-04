@@ -543,6 +543,58 @@ export async function main(ns) {
                 }
             }
         }
+        // --- gang detail (written by gang.js each pass; free -- it reuses calls gang.js already makes) ---
+        lines.push("");
+        let gRead = null;
+        try {
+            const raw = ns.read("gang-data.txt");
+            if (raw && raw.length > 0) gRead = JSON.parse(raw);
+        } catch (e) {}
+        if (gRead && Array.isArray(gRead.members)) {
+            const gage = Math.floor((Date.now() - (gRead.ts || 0)) / 1000);
+            lines.push("GANG  " + gRead.faction + " (" + (gRead.isHacking ? "hacking" : "combat") + ")  "
+                + gRead.members.length + " members  " + gRead.objective
+                + (gage > 60 ? "   [stale " + fmtAge(gage) + "]" : ""));
+            lines.push("  respect " + fmt(gRead.respect) + "  +" + fmt(gRead.respectPerSec) + "/s"
+                + "   wanted " + fmt(gRead.wanted) + "  penalty " + (gRead.penalty * 100).toFixed(1) + "%"
+                + "   money $" + fmt(gRead.moneyPerSec) + "/s");
+            lines.push("  territory " + (gRead.territory * 100).toFixed(1) + "%"
+                + "  war " + (gRead.war ? "ON" : "off")
+                + "  clash " + (gRead.clash * 100).toFixed(0) + "%"
+                + "   power " + fmt(gRead.power)
+                + "   equip discount " + (gRead.equipCostMult > 0 ? (1 / gRead.equipCostMult).toFixed(2) : "?") + "x");
+            // The number that actually drives the BitNode: gang respect -> faction rep.
+            // Gang.ts:152-155  rep/s = mults.faction_rep * respectGain * (1 + favor/100) / 75.
+            // favor is Singularity-only, so it comes from hud2's feed rather than costing gang.js RAM.
+            let favor = null, curNiteRep = null;
+            try {
+                const f = (hud2Read && hud2Read.factions || []).find(x => x.name === gRead.faction);
+                if (f) { favor = f.favor; curNiteRep = f.rep; }
+            } catch (e) {}
+            if (favor !== null) {
+                const repPerSec = (gRead.factionRepMult * gRead.respectPerSec * (1 + favor / 100)) / 75;
+                lines.push("  " + gRead.faction + " rep +" + fmt(repPerSec) + "/s"
+                    + "  (faction_rep " + gRead.factionRepMult.toFixed(3) + " x favor " + favor.toFixed(1) + ")"
+                    + (repPerSec > 0 && curNiteRep !== null
+                        ? "   Red Pill (2.50m) in " + fmtAge(Math.max(0, (2.5e6 - curNiteRep) / repPerSec)) : ""));
+            } else {
+                lines.push("  (rep/s needs favor -- run hud2 for it)");
+            }
+            const missTot = gRead.members.reduce((a, m) => a + m.miss, 0);
+            const missCost = gRead.members.reduce((a, m) => a + m.missCost, 0);
+            lines.push("  equipment: " + (missTot === 0
+                ? "all relevant gear owned -- nothing left to buy"
+                : missTot + " item(s) unowned across the gang, $" + fmt(missCost) + " to complete"));
+            lines.push("  " + "member".padEnd(12) + "task".padEnd(24) + "stat".padStart(9)
+                + "earnedResp".padStart(12) + "asc".padStart(7) + "  gear");
+            for (const m of gRead.members) {
+                lines.push("  " + String(m.n).slice(0, 11).padEnd(12) + String(m.task).slice(0, 23).padEnd(24)
+                    + fmt(m.stat).padStart(9) + fmt(m.resp).padStart(12)
+                    + (m.asc ? m.asc.toFixed(2) + "x" : "   -").padStart(7)
+                    + "  " + (m.miss === 0 ? "full" : m.own + " (+" + m.miss + ")"));
+            }
+        }
+
         // --- augstat (written by augstat.js, a ONE-SHOT -- so always stamp the age) ---
         lines.push("");
         let augRead = null;
