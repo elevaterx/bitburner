@@ -3,6 +3,10 @@
  *  whether you have the rep, and the stat multipliers. Flags hacking-relevant augs.
  *  Uses Singularity (SF4). Read-only -- buys nothing.
  *
+ *  usage:  run augstat.js [--top N]     N>0 caps rows per faction (and SAYS how many it hid).
+ *  Also writes augstat-data.txt, which hud1.js folds into the bb-status snapshot with an age
+ *  stamp -- so the aug picture travels with the snapshot instead of living in terminal scrollback.
+ *
  *  Sorting: within each faction, augs you can afford-by-rep first, then by rep requirement.
  *  The MULT column shows hacking-relevant multipliers (hack skill / exp / speed / money / chance)
  *  so you can prioritize the XP-and-level movers. NeuroFluxGovernor is flagged separately since
@@ -11,12 +15,16 @@
  *  @param {NS} ns */
 export async function main(ns) {
     const S = ns.singularity;
+    const flags = ns.flags([["top", 0]]);          // 0 = show every aug (default); --top N to cap
+    const TOP = Math.max(0, Number(flags.top) || 0);
+    const out = [];                                 // mirrored to augstat-data.txt for hud1's snapshot
+    const say = (line) => { ns.tprint(line); out.push(line); };
     const me = ns.getPlayer();
     const owned = new Set(S.getOwnedAugmentations(true));   // true = include purchased-but-not-installed
     const factions = me.factions;
 
-    ns.tprint("=== augstat ===  joined: " + factions.join(", "));
-    ns.tprint("cash: $" + fmt(me.money) + "   owned/queued augs: " + owned.size);
+    say("=== augstat ===  joined: " + factions.join(", "));
+    say("cash: $" + fmt(me.money) + "   owned/queued augs: " + owned.size);
 
     // hacking-relevant multiplier keys to surface
     const HACK_KEYS = [
@@ -51,25 +59,36 @@ export async function main(ns) {
             return x.repReq - y.repReq;
         });
 
-        ns.tprint("");
-        ns.tprint("--- " + fac + "   rep " + fmt(rep) + " ---");
-        if (rows.length === 0) { ns.tprint("  (all augs owned)"); continue; }
-        for (const r of rows.slice(0, 12)) {
+        say("");
+        say("--- " + fac + "   rep " + fmt(rep) + "   (" + rows.length + " unowned) ---");
+        if (rows.length === 0) { say("  (all augs owned)"); continue; }
+        // NO SILENT CAP. This used to be rows.slice(0, 12), which truncated NiteSec's ~85-aug
+        // catalogue to 12 with nothing in the output saying so -- and the augs it hid were the
+        // faction-rep ones that matter most in a gang BitNode. If a cap is wanted it is now
+        // explicit (--top N) and the elision is printed.
+        const shown = TOP > 0 ? rows.slice(0, TOP) : rows;
+        for (const r of shown) {
             const repMark = r.haveRep ? " " : "*";   // * = not enough rep yet
-            ns.tprint(
+            say(
                 "  " + repMark + r.a.padEnd(34) +
                 " rep " + fmt(r.repReq).padStart(9) +
                 "  $" + fmt(r.cost).padStart(9) +
                 (r.mults ? "   " + r.mults : "")
             );
         }
-        ns.tprint("  (* = insufficient rep)");
+        if (shown.length < rows.length) say("  ... " + (rows.length - shown.length) + " more hidden by --top " + TOP);
+        say("  (* = insufficient rep)");
     }
 
     // NeuroFlux note -- repeatable level multiplier, available from most factions
-    ns.tprint("");
-    ns.tprint("note: NeuroFluxGovernor is repeatable (stacks), boosts ALL stats incl hacking level/exp.");
-    ns.tprint("      Standard endgame XP/level multiplier -- buy in bulk once a faction has the rep.");
+    say("");
+    say("note: NeuroFluxGovernor is repeatable (stacks), boosts ALL stats incl hacking level/exp.");
+    say("      Standard endgame XP/level multiplier -- buy in bulk once a faction has the rep.");
+    say("note: each aug you QUEUE multiplies the next one's money price by 1.9x. Buy most-expensive");
+    say("      first (augbuy.js does), and never pad a round with cheap augs you don't need.");
+
+    // Feed hud1's snapshot. augstat is a one-shot, so the reader must show the age -- hud1 does.
+    ns.write("augstat-data.txt", JSON.stringify({ ts: Date.now(), lines: out }), "w");
 }
 
 function fmt(n) {

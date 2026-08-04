@@ -1,6 +1,7 @@
 /** augbuy.js -- one-shot hacking-augmentation buyer for the aug ratchet (built for BN9).
  *  Scans the factions you're in, finds hacking-relevant augs you don't own, and BUYS every
- *  one you can afford (rep + money), cheapest-rep-first. With "donate" it buys the missing
+ *  one you can afford (rep + money), MOST-EXPENSIVE-BASE-COST FIRST (see the sort below -- this is
+ *  worth ~8x on a real basket). With "donate" it buys the missing
  *  rep via donations (favor >= 150 factions only -- the big money sink). DRY RUN by default.
  *
  *  Buy in SMALL rounds then INSTALL: each aug queued in a round multiplies the next one's
@@ -53,15 +54,33 @@ export async function main(ns) {
             const rep = S.getFactionRep(f);
             const prev = cand.get(aug);
             if (!prev || rep > prev._rep) {
-                cand.set(aug, { aug, faction: f, _rep: rep, repReq: S.getAugmentationRepReq(aug), prereqs: S.getAugmentationPrereq(aug) });
+                let base = 0;
+                try { base = S.getAugmentationBasePrice(aug); } catch (e) { base = 0; }
+                cand.set(aug, { aug, faction: f, _rep: rep, base, repReq: S.getAugmentationRepReq(aug), prereqs: S.getAugmentationPrereq(aug) });
             }
         }
     }
 
-    // only augs whose prerequisites are already INSTALLED are buyable this round; cheapest-rep first
+    // Only augs whose prerequisites are already INSTALLED are buyable this round.
+    //
+    // ORDER: most-expensive BASE COST first. This used to sort by repReq ascending, which is close to
+    // cheapest-money-first and is the WORST possible order. Each queued aug multiplies the next one's
+    // money price by 1.9 (AugmentationHelpers.ts:32-36, MultipleAugMultiplier), so purchase i pays
+    // base_i * 1.9^i. For a fixed basket the total is minimised by pairing the LARGEST base cost with
+    // the SMALLEST exponent -- the rearrangement inequality. Ascending does the exact opposite.
+    //
+    // Measured on the six NiteSec faction-rep augs (bases $2.75b, $2b, $550m, $400m, $30m, $17.5m):
+    //   ascending  (old): $99.4b
+    //   descending (new): $12.10b     -- 8.2x cheaper for the identical set.
+    // It also fits MORE augs in a fixed budget, because the expensive ones are exactly the ones that
+    // explode under a high exponent. At $1.81b, ascending buys 3 and cannot afford ADR-V2 (the best
+    // of them); descending buys all 4 for $1.538b.
+    //
+    // Unaffordable augs are skipped without consuming an exponent -- the multiplier below is
+    // 1.9^bought.length, not 1.9^index -- so a skip costs nothing for the ones that follow.
     const list = [...cand.values()]
         .filter(c => c.prereqs.every(p => installed.has(p)))
-        .sort((a, b) => a.repReq - b.repReq);
+        .sort((a, b) => (b.base - a.base) || (a.repReq - b.repReq));
 
     const bought = [], blockedRep = [], blockedMoney = [];
     let money = ns.getPlayer().money, spent = 0, donated = 0;

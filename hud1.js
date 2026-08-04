@@ -530,6 +530,26 @@ export async function main(ns) {
                 }
             }
         }
+        // --- augstat (written by augstat.js, a ONE-SHOT -- so always stamp the age) ---
+        lines.push("");
+        let augRead = null;
+        try {
+            const raw = ns.read("augstat-data.txt");
+            if (raw && raw.length > 0) augRead = JSON.parse(raw);
+        } catch (e) {}
+        if (!augRead || !Array.isArray(augRead.lines)) {
+            lines.push("AUGSTAT: (none captured -- run augstat.js to fold the aug plan into this snapshot)");
+        } else {
+            const aage = Math.floor((Date.now() - (augRead.ts || 0)) / 1000);
+            // No freshness CUTOFF here, unlike the hud2/panel blocks: augstat is run on demand, so a
+            // stale capture is still the most recent aug picture there is. Prices move with every
+            // queued aug and rep resets to 0 on install, so the age is load-bearing -- print it loudly
+            // and let the reader decide, rather than silently dropping the section.
+            lines.push("AUGSTAT (captured " + fmtAge(aage) + " ago"
+                + (aage > 1800 ? " -- STALE, re-run augstat.js" : "") + ")");
+            for (const l of augRead.lines) lines.push("  " + l);
+        }
+
         // --- coord self-diagnostics (written by coordinator.js each loop) ---
         lines.push("");
         let healthRead = null;
@@ -702,6 +722,14 @@ export async function main(ns) {
 
         await ns.sleep(2000);
     }
+}
+
+/** Compact age for the snapshot's one-shot sections. */
+function fmtAge(sec) {
+    if (sec < 60) return sec + "s";
+    if (sec < 3600) return Math.floor(sec / 60) + "m";
+    if (sec < 86400) return (sec / 3600).toFixed(1) + "h";
+    return (sec / 86400).toFixed(1) + "d";
 }
 
 function fmt(n) {
