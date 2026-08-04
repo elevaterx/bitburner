@@ -85,6 +85,8 @@ export async function main(ns) {
   const GROW_THREADS = Math.max(1, Number(flag("grow-threads", 40)) || 40);
   const HOME_RESERVE = Math.max(0, Number(flag("reserve", 64)));
   const WEAKEN_PCT = Math.max(0, Number(flag("weaken-pct", 3)));   // hard floor, % of fleet
+  // Minimum share of total RAM a host must hold before it is allowed to run HACK workers.
+  const HACK_MIN_SHARE = Math.max(0, Number(flag("hack-min-share", 1))) / 100;
   const SAFETY = Math.max(1, Number(flag("safety", 4)));           // multiplier on modelled need
   const LOOP_MS = Math.max(2000, Number(flag("loop", 10000)) || 10000);
   const USE_HACK = !has("no-hack");
@@ -216,6 +218,17 @@ export async function main(ns) {
     }
 
     // --- place workers into whatever RAM is free ----------------------------------
+    // WHICH HOSTS MAY RUN HACK. Every hack op drains the target to exactly $0, and only a
+    // COMPLETED grow re-arms it -- so each hack instance consumes one "arming slot" per hackTime
+    // regardless of how many threads it carries. A 12-thread instance on a small server buys
+    // ~0.004% of the XP and costs a whole slot. Left unrestricted, ~29 tiny instances raced
+    // home's 298k-thread op for ~33 arms and it won ~28% of the time -- everything else paid the
+    // 25% failure tier. Concentrating hack on the hosts that actually hold the RAM makes arming
+    // near-certain. Sized from maxRam (stable across loops), not current free RAM.
+    const sizeOf = (h) => Math.max(0, ns.getServerMaxRam(h) - (h === "home" ? HOME_RESERVE : 0));
+    const totalRam = rooted.reduce((a, h) => a + sizeOf(h), 0) || 1;
+    const mayHack = (h) => USE_HACK && sizeOf(h) / totalRam >= HACK_MIN_SHARE;
+
     let placed = 0, placedHosts = 0;
     rooted.forEach((h, hostIdx) => {
       let gb = freeRam(ns, h);
@@ -246,14 +259,25 @@ export async function main(ns) {
       // ceil(need / hostsLeft) share) is how the feedback loop got a head start.
       const share = wantWeaken;
 
-      // In --no-hack baseline mode the "fill" role is grow, so price the fill at grow's RAM.
-      const rp = USE_HACK ? ram : { ...ram, hack: ram.grow };
+      // On a host that may not hack, the "fill" role is grow -- so price the fill at grow's RAM.
+      const allowHack = mayHack(h);
+      const rp = allowHack ? ram : { ...ram, hack: ram.grow };
       const plan = planHost(gb, rp, {
         weaken: share,
-        growInstances: USE_HACK ? GROW_INST : 0,
+        growInstances: allowHack ? GROW_INST : 0,
         growThreadsPerInstance: GROW_THREADS,
       });
-      if (!USE_HACK && plan.hack > 0) { plan.grow.push(plan.hack); plan.hack = 0; }
+      if (!allowHack && plan.hack > 0) {
+        // Split the fill across GROW_INST instances rather than one big one: what re-arms the
+        // target is the NUMBER of grow completions per hackTime, not the thread count.
+        const n = Math.max(1, GROW_INST);
+        const per = Math.floor(plan.hack / n);
+        for (let i = 0; i < n; i++) {
+          const chunk = i === n - 1 ? plan.hack - per * (n - 1) : per;
+          if (chunk > 0) plan.grow.push(chunk);
+        }
+        plan.hack = 0;
+      }
 
       if (h !== "home" && !ns.scp(WORKERS, h, "home")) return;
 

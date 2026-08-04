@@ -153,3 +153,20 @@ test("every placement carries a serial so a later top-up is not a duplicate no-o
   const keys = s.procs.map((p) => `${p.filename}|${p.host}|${p.args.join(",")}`);
   assert.equal(new Set(keys).size, keys.length, "duplicate (file, host, args) placement");
 });
+
+test("hack is concentrated on the host that holds the RAM, so grow can keep the target armed", async () => {
+  const s = await run({});
+  const hack = s.procs.filter((p) => p.filename === "xph.js");
+  const grow = s.procs.filter((p) => p.filename === "xpg.js");
+
+  // Each hack op drains the target to exactly $0 and only a COMPLETED grow re-arms it, so every
+  // hack instance costs one arming slot per hackTime no matter how many threads it carries. A
+  // 12-thread instance on a small server buys ~0.004% of the XP for a whole slot.
+  assert.equal(hack.length, 1, `${hack.length} hack instances -- each one costs an arming slot`);
+  assert.equal(hack[0].host, "home");
+  for (const p of hack) assert.ok(p.threads > 1000, "a tiny hack instance is never worth a slot");
+
+  // grow takes 3.2x as long as hack, so arming needs >= 3.2 grow instances per hack instance
+  assert.ok(grow.length >= 3.2 * hack.length,
+    `${grow.length} grow vs ${hack.length} hack -- the target will starve`);
+});
