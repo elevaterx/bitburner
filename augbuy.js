@@ -105,6 +105,21 @@ export async function main(ns) {
     //              which is how a $7.21b round bought PCMatrix ($2b for faction_rep 1.08) while
     //              skipping S.N.A ($30m for 1.15).
     // selectRound does both: greedy on density, returned in purchase order.
+    // LIVE QUEUE ESCALATION. getAugmentationPrice reflects the 1.9^queued multiplier
+    // (AugmentationHelpers.ts:157); getAugmentationBasePrice does not. Their RATIO is therefore the
+    // current multiplier -- exact, needs no counting, and immune to the NFG quirk where each
+    // purchased level is its own queue entry (Augmentation.ts:241-245). Probe any standard aug; SoA
+    // and NFG price differently. Without this a second augbuy run after a round of buying prices
+    // everything from 1.9^0. Verified live: Unstable Circadian Modulator showed $5.00b in the dry run
+    // against a real $849.18b -- ratio 169.83 = 1.9^8, matching 8 queued augs exactly.
+    let queueMult = 1;
+    for (const probe of buyable) {
+        try {
+            const b = S.getAugmentationBasePrice(probe.aug), pr = S.getAugmentationPrice(probe.aug);
+            if (b > 0 && pr > 0) { queueMult = pr / b; break; }
+        } catch (e) {}
+    }
+
     const money0 = ns.getPlayer().money;
     const budget = Number.isFinite(BUDGET_ARG) && BUDGET_ARG > 0 ? BUDGET_ARG : money0;
     const affordableByRep = buyable.filter(c => c._rep >= c.repReq);
@@ -112,8 +127,8 @@ export async function main(ns) {
     // fall back to the whole buyable set, ordered cheapest-for-the-basket.
     const list = DONATE
         ? buyable.sort((a, b) => (b.base - a.base) || (a.repReq - b.repReq))
-        : selectRound(affordableByRep, budget, { valueCutoff: CUTOFF });
-    const planCost = DONATE ? null : roundCost(list.map(c => c.base));
+        : selectRound(affordableByRep, budget, { valueCutoff: CUTOFF, priceScale: queueMult });
+    const planCost = DONATE ? null : roundCost(list.map(c => c.base)) * queueMult;
 
     const bought = [], blockedRep = [], blockedMoney = [];
     let money = ns.getPlayer().money, spent = 0, donated = 0;
@@ -126,7 +141,7 @@ export async function main(ns) {
         if (rep < c.repReq && DONATE) {
             let favor = 0; try { favor = S.getFactionFavor(c.faction); } catch (e) {}
             const need = (c.repReq - rep) * 1e6 / repMult / fwrg * 1.02;   // +2% buffer
-            const price0 = DO_BUY ? S.getAugmentationPrice(c.aug) : S.getAugmentationBasePrice(c.aug) * Math.pow(1.9, bought.length);
+            const price0 = DO_BUY ? S.getAugmentationPrice(c.aug) : S.getAugmentationBasePrice(c.aug) * queueMult * Math.pow(1.9, bought.length);
             if (favor >= 150 && money >= need + price0) {
                 if (DO_BUY) S.donateToFaction(c.faction, need);
                 money -= need; donated += need; spent += need;
@@ -135,7 +150,7 @@ export async function main(ns) {
         }
         if (rep < c.repReq) { blockedRep.push({ ...c, rep }); continue; }
         // money price: live value when buying (reflects 1.9x escalation); estimated in dry run
-        const price = DO_BUY ? S.getAugmentationPrice(c.aug) : S.getAugmentationBasePrice(c.aug) * Math.pow(1.9, bought.length);
+        const price = DO_BUY ? S.getAugmentationPrice(c.aug) : S.getAugmentationBasePrice(c.aug) * queueMult * Math.pow(1.9, bought.length);
         if (money < price) { blockedMoney.push({ ...c, price }); continue; }
         if (DO_BUY && !S.purchaseAugmentation(c.faction, c.aug)) { blockedMoney.push({ ...c, price }); continue; }
         money -= price; spent += price; bought.push({ ...c, price }); have.add(c.aug);
@@ -144,6 +159,10 @@ export async function main(ns) {
     // ---- report ----
     ns.tprint("=== augbuy " + (DO_BUY ? "(PURCHASED)" : "(DRY RUN -- add 'buy' to commit)") + " ===");
     if (!DONATE) {
+        if (queueMult > 1.001) {
+            ns.tprint("QUEUE ESCALATION x" + queueMult.toFixed(1) + " -- augs bought but NOT installed."
+                + " Every price below is base x" + queueMult.toFixed(1) + ". INSTALL to reset it to x1.");
+        }
         ns.tprint("weights: money-farm mults x" + (WEIGHTS.hacking_money / 0.5).toFixed(2)
             + "  (node " + (bnm ? ((bnm.ScriptHackMoneyGain ?? 1) * (bnm.ServerMaxMoney ?? 1)).toFixed(2) : "?")
             + ", coordinator " + (farmRunning ? "running" : "STOPPED") + ")");

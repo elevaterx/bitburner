@@ -167,3 +167,19 @@ test("node awareness reproduces the live DataJack case", () => {
   const w2 = nodeWeights({ scriptHackMoneyGain: 1, serverMaxMoney: 1, moneyFarmRunning: true });
   assert.ok(augValue({ hacking_money: 1.25 }, w2) > 0);
 });
+
+test("selectRound: priceScale accounts for augs already queued from earlier runs", () => {
+  const cands = [
+    { aug: "big", base: 5.0, value: 0.833 },
+    { aug: "small", base: 0.0075, value: 0.015 },
+  ];
+  // fresh board: both fit easily in $20b
+  assert.equal(selectRound(cands, 20).length, 2);
+  // with 8 augs already queued the board is at 1.9^8 = 169.8x -- "big" alone is $849b
+  const scale = Math.pow(1.9, 8);
+  assert.deepEqual(selectRound(cands, 20, { priceScale: scale }).map((c) => c.aug), ["small"]);
+  assert.equal(selectRound(cands, 1, { priceScale: scale }).length, 0);
+  // scale <= 0 or non-finite is ignored rather than zeroing the budget
+  assert.equal(selectRound(cands, 20, { priceScale: 0 }).length, 2);
+  assert.equal(selectRound(cands, 20, { priceScale: NaN }).length, 2);
+});
