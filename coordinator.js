@@ -132,7 +132,7 @@ export async function main(ns) {
                                        // Omit arg[4] (or nonzero) -> xpw ON (default, fills idle pool w/ XP).
     const XP_TARGET   = "joesguns";    // weaken target. low base sec -> fast cycles -> more XP/sec per thread.
                                        // any rooted low-level server works; joesguns is the traditional pick.
-    const XP_WORKER   = "xpw.js";      // worker script -- MUST be added to pull.js or it won't deploy after pull
+    const XP_WORKER   = "xpw.js";      // worker script -- deployed by update.js with the rest of the repo
     const XP_DEADBAND = 0.15;          // (legacy; no longer used after the immediate-shrink fix below.
                                        // Kept as a const to preserve the existing tuning surface in case
                                        // a future iteration wants it back on the grow path.)

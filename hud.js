@@ -15,8 +15,10 @@ export async function main(ns) {
                 if (action === "copied") {
                     ns.toast("HUD copied to clipboard", "success", 1500);
                 } else if (action === "pull") {
-                    const pid = ns.run("pull.js");
-                    ns.toast(pid ? "running pull.js" : "pull.js not found", pid ? "info" : "error", 2500);
+                    // pull.js is retired to _to_delete/ -- update.js replaced it (GitHub tree
+                    // discovery, no manifest). This button would otherwise be a silent no-op.
+                    const pid = ns.run("update.js");
+                    ns.toast(pid ? "running update.js" : "update.js not found", pid ? "info" : "error", 2500);
                 } else if (action === "puzzles") {
                     const pid = ns.run("puzzles.js");
                     ns.toast(pid ? "running puzzles.js" : "puzzles.js not found", pid ? "info" : "error", 2500);
