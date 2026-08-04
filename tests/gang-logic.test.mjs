@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   selectTaskNames, gangObjective, needsWantedControl, chooseTask,
   shouldAscend, equipmentToBuy, shouldWarfare, avgCombat, DEFAULT_GANG_CFG,
+  ascendGain, ascendRespectCost, projectedWantedPenalty, planAscensions,
 } from "../lib/gang-logic.js";
 
 // Minimal combat-gang task stats fixture.
@@ -73,4 +74,119 @@ test("shouldWarfare: engage only when we beat every territory holder", () => {
   assert.equal(shouldWarfare("The Syndicate", others, lose), false);
   // we own everything -> no clashes
   assert.equal(shouldWarfare("The Syndicate", { "Slum Snakes": { territory: 0 } }, {}), false);
+});
+
+// ---------------------------------------------------------------------------
+// Ascension planning. Costs verified against v3.0.2:
+//   Gang.ts:357     getWantedPenalty() = respect / (respect + wanted)
+//   Gang.ts:390-393 ascendMember: respect = max(1, respect - res.respect)
+//   GangMember.ts:298-341 ascend(): zeroes every *_exp, empties upgrades, returns earnedRespect
+// ---------------------------------------------------------------------------
+
+test("ascendGain: max relevant factor, 0 when the member cannot ascend", () => {
+  assert.equal(ascendGain({ str: 1.6, def: 1.1, dex: 1.1, agi: 1.1, hack: 9 }, false), 1.6);
+  assert.equal(ascendGain({ hack: 2.0, str: 9 }, true), 2.0);
+  assert.equal(ascendGain(undefined, false), 0);      // getAscensionResult returns undefined
+  assert.equal(ascendGain({}, true), 0);              // no finite factors
+});
+
+test("ascendRespectCost: prefers asc.respect, falls back to earnedRespect, never negative", () => {
+  assert.equal(ascendRespectCost({ asc: { respect: 500 }, earnedRespect: 9 }), 500);
+  assert.equal(ascendRespectCost({ asc: { hack: 2 }, earnedRespect: 42 }), 42);
+  assert.equal(ascendRespectCost({ asc: null }), 0);
+  assert.equal(ascendRespectCost({ asc: { respect: -5 }, earnedRespect: 7 }), 7);
+});
+
+test("projectedWantedPenalty: matches Gang.getWantedPenalty and floors respect at 1", () => {
+  // The user's live numbers: 4.57m respect, 106 wanted -> effectively no penalty.
+  const p = projectedWantedPenalty(4_570_000, 106, 0);
+  assert.ok(Math.abs(p - 4_570_000 / 4_570_106) < 1e-12);
+  assert.ok(p > 0.9999);
+  // Draining all respect floors at 1, which is what makes wanted suddenly matter.
+  assert.ok(Math.abs(projectedWantedPenalty(1000, 106, 5000) - 1 / 107) < 1e-12);
+  assert.equal(projectedWantedPenalty(1000, 0, 0), 1);
+});
+
+test("planAscensions: threshold filter, best-gain-first, cheaper breaks ties", () => {
+  const gang = { respect: 1e9, wantedLevel: 0 };
+  const r = planAscensions([
+    { name: "a", asc: { hack: 1.2, respect: 1 } },        // below threshold
+    { name: "b", asc: { hack: 2.0, respect: 900 } },
+    { name: "c", asc: { hack: 2.0, respect: 100 } },      // same gain, cheaper -> first
+  ], gang, true, { ...DEFAULT_GANG_CFG, ascendMaxPerTick: 10 });
+  assert.deepEqual(r.ascend, ["c", "b"]);
+  assert.equal(r.skipped.length, 0);                      // 'a' never entered the ranking
+});
+
+test("planAscensions: per-tick cap staggers the retraining downtime", () => {
+  const gang = { respect: 1e9, wantedLevel: 0 };
+  const cands = ["a", "b", "c", "d"].map((n) => ({ name: n, asc: { hack: 2.0, respect: 10 } }));
+  const r = planAscensions(cands, gang, true, DEFAULT_GANG_CFG);   // ascendMaxPerTick: 2
+  assert.equal(r.ascend.length, 2);
+  assert.equal(r.skipped.length, 2);
+  assert.ok(r.skipped.every((s) => s.reason === "per-tick cap"));
+});
+
+test("planAscensions: stops before the projected wanted penalty breaks the floor", () => {
+  // respect 100k, wanted 100 -> penalty 0.999, comfortably over the 0.95 floor.
+  // Ascending 'a' (cost 99k) would leave respect 1000 -> 1000/1100 = 0.909, under it.
+  const gang = { respect: 100_000, wantedLevel: 100 };
+  const r = planAscensions([
+    { name: "a", asc: { hack: 3.0, respect: 99_000 } },
+    { name: "b", asc: { hack: 2.0, respect: 0 } },        // free -> still allowed
+  ], gang, true, { ...DEFAULT_GANG_CFG, ascendMaxPerTick: 10 });
+  assert.deepEqual(r.ascend, ["b"]);
+  assert.equal(r.skipped.length, 1);
+  assert.equal(r.skipped[0].name, "a");
+  assert.ok(r.skipped[0].reason.startsWith("penalty floor"));
+});
+
+test("planAscensions: an already-sub-floor gang is not deadlocked -- free ascensions still pass", () => {
+  // Opening penalty is 1000/1100 = 0.909, already under the 0.95 floor. A hard floor would
+  // refuse everything forever; the effective floor clamps to the current penalty instead.
+  const gang = { respect: 1000, wantedLevel: 100 };
+  const r = planAscensions([
+    { name: "a", asc: { hack: 3.0, respect: 900 } },      // would drop it to 0.50 -> still blocked
+    { name: "b", asc: { hack: 2.0, respect: 0 } },        // costs nothing -> must be allowed
+  ], gang, true, { ...DEFAULT_GANG_CFG, ascendMaxPerTick: 10 });
+  assert.deepEqual(r.ascend, ["b"]);
+  assert.equal(r.skipped[0].name, "a");
+  assert.ok(r.skipped[0].reason.startsWith("penalty floor"));
+});
+
+test("planAscensions: the floor is checked against RUNNING respect, not the opening balance", () => {
+  // Each of these alone is fine; together they'd drop respect to 200 -> penalty 200/300 = 0.67.
+  const gang = { respect: 10_000, wantedLevel: 100 };
+  const r = planAscensions([
+    { name: "a", asc: { hack: 3.0, respect: 4900 } },
+    { name: "b", asc: { hack: 2.0, respect: 4900 } },
+  ], gang, true, { ...DEFAULT_GANG_CFG, ascendMaxPerTick: 10, ascendPenaltyFloor: 0.95 });
+  assert.deepEqual(r.ascend, ["a"]);                       // 5100/5200 = 0.981, ok
+  assert.equal(r.skipped[0].name, "b");                    // 200/300 = 0.667, blocked
+});
+
+test("planAscensions: never ascends the designated wanted-reducer", () => {
+  const gang = { respect: 1e9, wantedLevel: 0 };
+  const r = planAscensions([
+    { name: "reducer", asc: { hack: 5.0, respect: 0 }, isReducer: true },
+    { name: "b", asc: { hack: 2.0, respect: 0 } },
+  ], gang, true, { ...DEFAULT_GANG_CFG, ascendMaxPerTick: 10 });
+  assert.deepEqual(r.ascend, ["b"]);
+  assert.equal(r.skipped[0].reason, "wanted-reducer");
+});
+
+test("planAscensions: empty / no-candidate inputs are safe", () => {
+  const gang = { respect: 1000, wantedLevel: 10 };
+  assert.deepEqual(planAscensions([], gang, true), { ascend: [], skipped: [] });
+  assert.deepEqual(planAscensions(null, gang, true), { ascend: [], skipped: [] });
+  assert.deepEqual(planAscensions([{ name: "a", asc: undefined }], gang, true), { ascend: [], skipped: [] });
+});
+
+test("planAscensions: the live-gang case -- 106 wanted against millions of respect blocks nothing", () => {
+  const gang = { respect: 4_570_000, wantedLevel: 106 };
+  const r = planAscensions([
+    { name: "a", asc: { hack: 2.0, respect: 400_000 } },
+    { name: "b", asc: { hack: 1.9, respect: 400_000 } },
+  ], gang, true, { ...DEFAULT_GANG_CFG, ascendMaxPerTick: 10 });
+  assert.deepEqual(r.ascend, ["a", "b"]);
 });

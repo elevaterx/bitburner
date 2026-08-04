@@ -35,6 +35,17 @@ export async function main(ns) {
     const ENABLE_PROGRAMS  = true;
     const ENABLE_BACKDOORS = true;
     const ENABLE_WORK      = true;
+    // Live control file for the WORK phase only (panel writes it; no restart needed).
+    // "nowork" makes sing HANDS OFF the player's current action so you can set faction work by hand
+    // without sing overriding it on the next loop. It does not cancel anything -- it just stops sing
+    // calling workForFaction. Anything else (or a missing file) leaves work enabled, so the default
+    // is the historical behaviour. Deliberately NOT rewritten on launch -- unlike hacknet-ctl.txt,
+    // this setting is sticky across restarts, because a restart silently re-enabling work is exactly
+    // the surprise you don't want from a 56GB daemon.
+    // CAVEAT: the CRIME phase still fires if cash < CASH_FLOOR, and commitCrime calls
+    // Player.finishWork(true) (Singularity.ts:1011) -- that WOULD cancel manual faction work.
+    // Only reachable below $500k, so it is a cold-start edge, not a normal-play one.
+    const WORK_CTL = "sing-ctl.txt";
     const ENABLE_CRIME     = true;        // commit crime when cash < CASH_FLOOR
 
     const CASH_RESERVE = 1_000_000;   // never let cash drop below this from purchases
@@ -176,6 +187,7 @@ export async function main(ns) {
         const log = (s) => lines.push(s);
         const cash = ns.getPlayer().money;
         const lvl  = ns.getHackingLevel();
+        const workOff = String(ns.read(WORK_CTL) || "").trim() === "nowork";
         log("=== sing  L" + lvl + "  $" + fmt(cash) + "  [BN" + node + ": " + profile.label + "] ===");
 
         // --- PHASE 1: invite accept ---
@@ -318,6 +330,16 @@ export async function main(ns) {
                     }
                 }
             } catch (e) { log("  [crime phase error] " + e); }
+        } else if (ENABLE_WORK && profile.work && workOff) {
+            // PASSIVE by design. This is the "I'll pick my own faction work, stop overriding me"
+            // switch, so it must NOT call stopAction() -- that would cancel the work you just set by
+            // hand, which is the exact opposite of the point. sing simply stops touching the player's
+            // current action and reports what you're doing instead.
+            let cur = null;
+            try { cur = ns.singularity.getCurrentWork(); } catch (e) {}
+            const doing = cur && (cur.type === "FACTION" || cur.type === "Faction") && cur.factionName
+                ? "  (you: " + cur.factionName + ")" : "";
+            log("  work: HANDS OFF via " + WORK_CTL + doing + " -- panel: Sing 'Work' to resume");
         } else if (ENABLE_WORK && profile.work) {
             try {
                 const me = ns.getPlayer().factions;
@@ -328,28 +350,49 @@ export async function main(ns) {
                     try { return ns.singularity.getAugmentationsFromFaction(f).some(a => a !== "NeuroFlux Governor" && !owned.has(a)); }
                     catch (e) { return true; }
                 };
-                const target = WORK_PRIORITY.find(f => me.includes(f) && needsAugs(f));
-                if (!target) {
+                // ORDERED TRY-LOOP, not `.find` + give up. The old code picked the single
+                // highest-priority faction with augs left and, if workForFaction refused it, logged a
+                // guess and did nothing for the rest of the loop -- so ONE permanently-unworkable
+                // faction stalled the entire work phase forever. That is not hypothetical: your GANG
+                // faction is permanently unworkable (Singularity.ts:777-779, "you are managing a gang
+                // for it"), and it sits high in WORK_PRIORITY. Every refusal path in workForFaction
+                // returns false BEFORE Player.startWork (Singularity.ts:769-800), so a rejected call
+                // cannot cancel work already in progress -- the loop is safe to run blind.
+                const candidates = WORK_PRIORITY.filter((f) => me.includes(f) && needsAugs(f));
+                if (candidates.length === 0) {
                     log("  work: no priority faction joined yet");
                 } else {
-                    // only restart work if not already on this target -- repeated
-                    // workForFaction calls cancel + restart, losing time.
-                    let alreadyAt = false;
+                    // Stay put if we're already working ANY candidate -- repeated workForFaction
+                    // calls cancel + restart, losing time.
+                    let alreadyAt = null;
                     try {
                         const cur = ns.singularity.getCurrentWork();
                         // type field varies by version; check multiple shapes defensively
-                        if (cur && (cur.type === "FACTION" || cur.type === "Faction") && cur.factionName === target) {
-                            alreadyAt = true;
+                        if (cur && (cur.type === "FACTION" || cur.type === "Faction") && candidates.includes(cur.factionName)) {
+                            alreadyAt = cur.factionName;
                         }
                     } catch (e) {}
-                    if (!alreadyAt) {
-                        const started = ns.singularity.workForFaction(target, "hacking", FOCUS);
-                        if (started) log("  start work: " + target + " (hacking, focus=" + FOCUS + ")");
-                        else log("  could not start work: " + target + " (may need to qualify for hacking work type)");
-                    } else {
+                    if (alreadyAt) {
                         let rep = 0;
-                        try { rep = ns.singularity.getFactionRep(target); } catch (e) {}
-                        log("  working: " + target + "  rep " + fmt(rep));
+                        try { rep = ns.singularity.getFactionRep(alreadyAt); } catch (e) {}
+                        log("  working: " + alreadyAt + "  rep " + fmt(rep));
+                    } else {
+                        const refused = [];
+                        let started = null;
+                        for (const f of candidates) {
+                            let ok = false;
+                            try { ok = ns.singularity.workForFaction(f, "hacking", FOCUS); } catch (e) { ok = false; }
+                            if (ok) { started = f; break; }
+                            refused.push(f);
+                        }
+                        if (started) {
+                            log("  start work: " + started + " (hacking, focus=" + FOCUS + ")"
+                                + (refused.length ? "  [skipped " + refused.join(", ") + "]" : ""));
+                        } else {
+                            log("  work: every candidate refused -- " + candidates.join(", ")
+                                + ". Causes: your gang's faction can never be worked, and some factions"
+                                + " offer no hacking contracts.");
+                        }
                     }
                 }
             } catch (e) { log("  [work phase error] " + e); }

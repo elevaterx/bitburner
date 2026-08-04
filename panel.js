@@ -114,18 +114,23 @@ function modeData(ns, file, running, args) {
   if (!spec) return null;
   if (spec.type === "relaunch") {
     const active = running ? activeRelaunchMode(spec.options, args) : -1;
-    return { type: "relaunch", file, options: spec.options.map((o, i) => ({ label: o.label, args: o.args, active: i === active })) };
+    return { type: "relaunch", file, options: spec.options.map((o, i) => ({ label: o.label, args: o.args, danger: !!o.danger, active: i === active })) };
   }
   if (spec.type === "write") {
     const cur = String(ns.read(spec.file) || "").trim();
-    return { type: "write", file: spec.file, options: spec.options.map((o) => ({ label: o.label, content: o.content, active: cur === o.content })) };
+    return { type: "write", file: spec.file, options: spec.options.map((o) => ({ label: o.label, content: o.content, danger: !!o.danger, active: cur === o.content })) };
   }
   // file toggle
   const present = ns.fileExists(spec.file, "home");
-  return { type: "file", controlFile: spec.file, options: spec.options.map((o) => ({ label: o.label, on: o.on, active: o.on === present })) };
+  return { type: "file", controlFile: spec.file, options: spec.options.map((o) => ({ label: o.label, on: o.on, danger: !!o.danger, active: o.on === present })) };
 }
 
 // ---------------- rendering ----------------
+
+/** Arm state for destructive chips. Module scope so it survives the 1s re-render; the panel
+ *  rebuilds its whole React tree every loop, so this cannot live in component state. */
+const ARM_MS = 5000;
+const armedChip = { id: null, at: 0 };
 
 function view(h, { modRows, workerRows, homeFree, homeMax, node, auto, pending }) {
   const mono = { fontFamily: "monospace", fontSize: "12px" };
@@ -148,15 +153,28 @@ function view(h, { modRows, workerRows, homeFree, homeMax, node, auto, pending }
     },
   }, label);
 
-  // mode chips for a row (relaunch or file)
+  // mode chips for a row (relaunch, write, or file toggle).
+  // Chips marked `danger` are ARM-THEN-CONFIRM: the first click arms and relabels to "CONFIRM?",
+  // the second within ARM_MS fires. These chips are ~40px wide and sit next to Start/Stop; a stray
+  // click on SELL ALL costs a $100k commission per open position and drops you out of the market.
   const modeChips = (mode) => {
     if (!mode) return null;
-    return mode.options.map((o) => chip(
-      o.label, o.active,
-      mode.type === "relaunch" ? () => pending.push({ type: "relaunch", file: mode.file, args: o.args })
-      : mode.type === "write"  ? () => pending.push({ type: "write", file: mode.file, content: o.content })
-      : () => pending.push({ type: "file", file: mode.controlFile, on: o.on }),
-    ));
+    return mode.options.map((o) => {
+      const id = (mode.file || mode.controlFile) + "|" + o.label;
+      const fire = mode.type === "relaunch" ? () => pending.push({ type: "relaunch", file: mode.file, args: o.args })
+        : mode.type === "write" ? () => pending.push({ type: "write", file: mode.file, content: o.content })
+        : () => pending.push({ type: "file", file: mode.controlFile, on: o.on });
+      if (!o.danger) return chip(o.label, o.active, fire);
+      const armed = armedChip.id === id && Date.now() - armedChip.at < ARM_MS;
+      return chip(
+        armed ? "CONFIRM?" : o.label,
+        o.active || armed,
+        armed
+          ? () => { armedChip.id = null; fire(); }
+          : () => { armedChip.id = id; armedChip.at = Date.now(); },
+        armed ? "#a33" : "#733",
+      );
+    });
   };
 
   const rowWrap = (key, cells) =>

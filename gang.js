@@ -7,12 +7,15 @@
  *
  *  Once running: recruits to 12, trains members to a stat floor, then farms respect until the gang is
  *  full and money after that; keeps one member on wanted-reduction when the penalty bites; ascends on
- *  a strong multiplier gain; buys relevant equipment within a money budget; and engages territory
+ *  a strong multiplier gain -- rate-limited and respect-aware, since ascending drains gang respect
+ *  (which drives the wanted penalty) and resets the member to training; buys relevant equipment
+ *  within a money budget; and engages territory
  *  warfare only when it can beat every rival that still holds territory.
  *
  *  All decisions live in lib/gang-logic.js (pure, unit-tested); this file is the thin ns shell.
  *
- *  usage:  run gang.js [--once] [--equip-frac 0.1] [--train-until 200] [--ascend 1.5] [--no-warfare]
+ *  usage:  run gang.js [--once] [--equip-frac 0.1] [--train-until 200] [--ascend 1.5]
+ *                      [--ascend-max 2] [--ascend-floor 0.95] [--no-warfare]
  *  @param {NS} ns */
 import { getCapabilities } from "./lib/caps.js";
 import { accessKarmaRequirement, rankGangRoutes } from "./lib/gang-bootstrap.js";
@@ -21,7 +24,7 @@ import { writeStatus } from "./lib/modules.js";
 import {
   GANG_FACTIONS, GANG_KARMA_REQ, DEFAULT_GANG_CFG,
   selectTaskNames, gangObjective, needsWantedControl, chooseTask,
-  shouldAscend, equipmentToBuy, shouldWarfare,
+  planAscensions, equipmentToBuy, shouldWarfare,
 } from "./lib/gang-logic.js";
 
 export async function main(ns) {
@@ -31,6 +34,8 @@ export async function main(ns) {
     ["equip-frac", 0.10],
     ["train-until", DEFAULT_GANG_CFG.trainUntil],
     ["ascend", DEFAULT_GANG_CFG.ascendThreshold],
+    ["ascend-max", DEFAULT_GANG_CFG.ascendMaxPerTick],
+    ["ascend-floor", DEFAULT_GANG_CFG.ascendPenaltyFloor],
     ["no-warfare", false],
     ["quiet", false],
   ]);
@@ -38,6 +43,8 @@ export async function main(ns) {
     ...DEFAULT_GANG_CFG,
     trainUntil: Number(flags["train-until"]),
     ascendThreshold: Number(flags.ascend),
+    ascendMaxPerTick: Number(flags["ascend-max"]),
+    ascendPenaltyFloor: Number(flags["ascend-floor"]),
   };
   const log = (m) => ns.tprint("[gang] " + m);
   const vlog = (m) => { if (!flags.quiet) ns.print("[gang] " + m); };
@@ -144,35 +151,64 @@ function manageGang(ns, cfg, flags, vlog) {
   const members = g.getMemberNames();
   const taskNames = selectTaskNames(g.getTaskNames().map((n) => g.getTaskStats(n)), isHacking);
   const objective = gangObjective(gang, members.length, cfg);
-  writeStatus(ns, "gang", { line: members.length + "/12  resp " + fmtNum(gang.respect) + "  " + objective + (gang.territoryWarfareEngaged ? "  war" : "") });
+
+  // One read per member, reused below. getMemberInformation is already paid for RAM-wise.
+  const infos = new Map();
+  for (const name of members) infos.set(name, g.getMemberInformation(name));
 
   // Designate one wanted-reducer (the biggest wanted contributor) when the penalty bites.
   let reducer = null;
   if (needsWantedControl(gang, cfg) && taskNames.wanted) {
     let worst = -Infinity;
     for (const name of members) {
-      const wl = g.getMemberInformation(name).wantedLevelGain;
+      const wl = infos.get(name).wantedLevelGain;
       if (wl > worst) { worst = wl; reducer = name; }
     }
   }
 
-  // 2. Ascend + retask each member.
+  // 2. Ascend -- planned gang-wide, not per-member. Ascending drains gang respect (the numerator of
+  //    the wanted penalty) and resets the member to zero exp, so the plan caps how many go per tick,
+  //    spares the wanted-reducer, and stops before the projected penalty breaks the floor.
+  const plan = planAscensions(
+    members.map((name) => ({
+      name,
+      asc: g.getAscensionResult(name),
+      earnedRespect: infos.get(name).earnedRespect,
+      isReducer: name === reducer,
+    })),
+    gang, isHacking, cfg,
+  );
+  for (const name of plan.ascend) {
+    g.ascendMember(name);
+    infos.set(name, g.getMemberInformation(name));   // stats/exp just reset -- retask off fresh data
+    vlog("ascended " + name);
+  }
+  if (plan.skipped.length) {
+    vlog("ascend held: " + plan.skipped.map((s) => s.name + " (" + s.reason + ")").join(", "));
+  }
+
+  // Re-read gang info: ascensions moved respect, and the status line should show the truth.
+  const gangNow = plan.ascend.length ? g.getGangInformation() : gang;
+  writeStatus(ns, "gang", {
+    line: members.length + "/12  resp " + fmtNum(gangNow.respect) + "  " + objective
+      + "  pen " + (gangNow.wantedPenalty * 100).toFixed(1) + "%"
+      + (plan.ascend.length ? "  asc" + plan.ascend.length : "")
+      + (gangNow.territoryWarfareEngaged ? "  war" : ""),
+  });
+
+  // 3. Retask each member.
   for (const name of members) {
-    const info = g.getMemberInformation(name);
-    if (shouldAscend(g.getAscensionResult(name), isHacking, cfg)) {
-      g.ascendMember(name);
-      vlog("ascended " + name);
-    }
-    const want = chooseTask(g.getMemberInformation(name), gang, {
+    const info = infos.get(name);
+    const want = chooseTask(info, gangNow, {
       isHacking, objective, forceWanted: name === reducer, taskNames, cfg,
     });
     if (want && info.task !== want) g.setMemberTask(name, want);
   }
 
-  // 3. Equipment: buy cheapest-first across all members within a money budget this pass.
+  // 4. Equipment: buy cheapest-first across all members within a money budget this pass.
   buyEquipment(ns, g, members, isHacking, Number(flags["equip-frac"]), vlog);
 
-  // 4. Territory warfare toggle.
+  // 5. Territory warfare toggle.
   if (!flags["no-warfare"]) {
     const others = g.getAllGangInformation();
     const chances = {};
