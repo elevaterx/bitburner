@@ -53,7 +53,12 @@ export async function main(ns) {
 
   while (true) {
     const opponent = flags.opponent && flags["no-cycle"] ? String(flags.opponent) : OPPONENTS[oppIdx % OPPONENTS.length];
-    try { ns.go.resetBoardState(opponent, size); } catch (e) { /* opponent may be locked */ }
+    // A swallowed failure here is a silent trap: the loop would keep playing the PREVIOUS
+    // board/opponent and the record would look fine while the pin never took. Report it.
+    let resetOk = true;
+    try { ns.go.resetBoardState(opponent, size); }
+    catch (e) { resetOk = false; ns.tprint("go: resetBoardState(\"" + opponent + "\", " + size + ") FAILED -- " + e); }
+    if (!resetOk) { await ns.sleep(5000); continue; }
     vlog("new game vs " + opponent + " (" + size + "x" + size + ")");
     let komi = 5.5; try { komi = ns.go.getGameState().komi; } catch (e) {}   // white's bonus, per opponent
     const cfg = { iters: 400, budget: 600, ...readCtl() };   // live engine tuning, re-read each game
