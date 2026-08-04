@@ -89,6 +89,9 @@ export async function main(ns) {
   const HACK_MIN_SHARE = Math.max(0, Number(flag("hack-min-share", 1))) / 100;
   // Practical floor on how fast an op can actually turn around, in ms. See rankTargets.
   const MIN_OP_MS = Math.max(0, Number(flag("min-op-ms", 150)));
+  // Max share of ANY host that weaken + grow may take, so hack always gets the rest. Absolute
+  // support sizes are what broke this on a many-small-hosts node -- see planHost.
+  const SUPPORT_PCT = Math.min(90, Math.max(1, Number(flag("support-pct", 25)))) / 100;
   const SAFETY = Math.max(1, Number(flag("safety", 4)));           // multiplier on modelled need
   const LOOP_MS = Math.max(2000, Number(flag("loop", 10000)) || 10000);
   const USE_HACK = !has("no-hack");
@@ -266,10 +269,17 @@ export async function main(ns) {
       // On a host that may not hack, the "fill" role is grow -- so price the fill at grow's RAM.
       const allowHack = mayHack(h);
       const rp = allowHack ? ram : { ...ram, hack: ram.grow };
+      // Scale the grow instance size to the host too: what re-arms the target is the NUMBER of
+      // grow completions, not their thread count, so a small host wants many tiny instances
+      // rather than one that swallows it.
+      const growPer = allowHack
+        ? Math.max(1, Math.min(GROW_THREADS, Math.floor((hostThreads * SUPPORT_PCT) / Math.max(1, GROW_INST))))
+        : GROW_THREADS;
       const plan = planHost(gb, rp, {
         weaken: share,
         growInstances: allowHack ? GROW_INST : 0,
-        growThreadsPerInstance: GROW_THREADS,
+        growThreadsPerInstance: growPer,
+        supportCapThreads: allowHack ? Math.ceil(hostThreads * SUPPORT_PCT) : Infinity,
       });
       if (!allowHack && plan.hack > 0) {
         // Split the fill across GROW_INST instances rather than one big one: what re-arms the

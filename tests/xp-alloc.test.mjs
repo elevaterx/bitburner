@@ -213,3 +213,40 @@ test("the op-time floor never penalises a target already slower than the floor",
   const r = rankTargets(cands);
   assert.equal(r[0].host, "fast");   // 6.0/0.15 = 40 vs 32.7/40 = 0.82
 });
+
+test("planHost caps support as a FRACTION of the host, so hack is never starved to zero", () => {
+  const ram = { hack: 1.70, grow: 1.75, weaken: 1.80 };
+
+  // A 27GB network server -- roughly what BN2 hands you -- is ~15 hack threads. The old absolute
+  // sizing (4 grow instances x 40 threads = 280GB) swallowed the whole host and hack got nothing.
+  const small = 27;
+  const hostThreads = Math.floor(small / ram.hack);
+  const capped = planHost(small, ram, {
+    weaken: 100, growInstances: 4, growThreadsPerInstance: 40,
+    supportCapThreads: Math.ceil(hostThreads * 0.25),
+  });
+  const support = capped.weaken + capped.grow.reduce((a, b) => a + b, 0);
+  assert.ok(support <= Math.ceil(hostThreads * 0.25), `support ${support} exceeded the cap`);
+  assert.ok(capped.hack > 0, "hack must still be placed on a small host");
+
+  // uncapped, the same request starves hack completely -- this is the bug, pinned
+  const starved = planHost(small, ram, { weaken: 100, growInstances: 4, growThreadsPerInstance: 40 });
+  assert.equal(starved.hack, 0);
+
+  // and the cap never overcommits
+  const used = capped.weaken * ram.weaken + capped.grow.reduce((a, b) => a + b, 0) * ram.grow +
+               capped.hack * ram.hack;
+  assert.ok(used <= small, `used ${used} > ${small}`);
+});
+
+test("the support cap is a no-op on a host large enough not to need it", () => {
+  const ram = { hack: 1.70, grow: 1.75, weaken: 1.80 };
+  const big = 524288;
+  const hostThreads = Math.floor(big / ram.hack);
+  const a = planHost(big, ram, { weaken: 9000, growInstances: 4, growThreadsPerInstance: 40 });
+  const b = planHost(big, ram, {
+    weaken: 9000, growInstances: 4, growThreadsPerInstance: 40,
+    supportCapThreads: Math.ceil(hostThreads * 0.25),
+  });
+  assert.deepEqual(a, b, "a huge host should plan identically with or without the cap");
+});

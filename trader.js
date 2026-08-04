@@ -22,7 +22,11 @@
  *  lost on reset. (2) shorting is enabled only on 4S (accurate); EMA mode is long-only
  *  because an early estimate is too noisy to short safely. (3) shorting ALSO requires
  *  short-market access -- you must be in BN8 or hold Source-File 8 Level 2. Outside BN8,
- *  SF8.1 grants WSE/TIX/4S but NOT shorting, so this runs long-only (4S) until SF8.2.
+ *  SF8.1 grants WSE + TIX API only. 4S is NEVER granted by a Source-File: it is a
+ *  $25b purchase (MarketDataTixApi4SCost) in every BitNode. SF8.2 adds shorting, SF8.3
+ *  adds limit/stop orders. So under SF8.1 this runs long-only even on 4S.
+ *  4S/TIX/WSE access survives an augmentation install and is cleared only on BitNode
+ *  exit (prestigeSourceFile, not prestigeAugmentation).
  *
  *  Must be added to pull.js. @param {NS} ns */
 export async function main(ns) {
@@ -110,7 +114,7 @@ export async function main(ns) {
             const cashNow = ns.getPlayer().money;
             if (cashNow >= S4_COST * BUY_BUFFER) {
                 try {
-                    if (ns.stock.purchase4SMarketDataTixApi()) { ns.tprint("trader: bought 4S TIX API -- accurate long+short trading online."); use4S = true; }
+                    if (ns.stock.purchase4SMarketDataTixApi()) { ns.tprint("trader: bought 4S TIX API -- accurate forecasts online (" + (canShort ? "long+short" : "long-only, needs SF8.2 to short") + ")."); use4S = true; }
                 } catch (e) {}
             } else if (nw >= S4_SAVE_AT) {
                 // Rich enough overall, but too much is tied up in positions. Sell down to raise cash.
