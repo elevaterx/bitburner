@@ -1,30 +1,41 @@
 /** augbuy.js -- one-shot hacking-augmentation buyer for the aug ratchet (built for BN9).
  *  Scans the factions you're in, finds hacking-relevant augs you don't own, and BUYS every
- *  one you can afford (rep + money), MOST-EXPENSIVE-BASE-COST FIRST (see the sort below -- this is
- *  worth ~8x on a real basket). With "donate" it buys the missing
+ *  one you can afford (rep + money). Picks the basket by VALUE PER DOLLAR and then buys it
+ *  most-expensive-first -- see lib/aug-plan.js for why those are two different decisions and what
+ *  goes wrong when you conflate them. With "donate" it buys the missing
  *  rep via donations (favor >= 150 factions only -- the big money sink). DRY RUN by default.
  *
  *  Buy in SMALL rounds then INSTALL: each aug queued in a round multiplies the next one's
  *  MONEY price by 1.9x, so one huge round blows up cost. This buys until the next is
  *  unaffordable; install between rounds so prices reset and prereqs unlock.
  *
- *  usage: run augbuy.js [buy] [donate] [all] [nfg]
+ *  usage: run augbuy.js [buy] [donate] [all] [nfg] [--budget N]
  *    (no flags)  DRY RUN -- report what it WOULD buy / donate and what's blocked
  *    buy         actually purchase
  *    donate      buy missing rep via donation (favor >= 150 only) -- can cost trillions+
  *    all         include non-hacking augs too (for the Daedalus 30-aug count)
  *    nfg         also buy NeuroFlux Governor levels (expensive; buy deliberately)
+ *    --budget N  plan against N dollars instead of your CASH. Your buying power is usually net
+ *                worth, not cash -- the trader keeps ~90% of it in open positions -- so a plan
+ *                built on cash alone badly understates the round. Pass your net worth to see the
+ *                real basket, then liquidate (panel: Trader 'SELL ALL') before committing.
+ *                augbuy deliberately does NOT read ns.stock itself: that would add stock-API RAM
+ *                to an already ~45GB script and make it fail outright without TIX access.
  *
  *  Real singularity calls (needs SF4) -- RAM is significant (~40-50GB); run on demand, not
  *  continuously (kill xpfarm briefly if home is tight). Excludes "The Red Pill" (node-exit;
  *  install that deliberately as the last step). Does NOT install -- you install when ready.
  *  Must be in pull.js. @param {NS} ns */
+import { augValue, selectRound, roundCost } from "./lib/aug-plan.js";
+
 export async function main(ns) {
     ns.disableLog("ALL");
     const DO_BUY = ns.args.includes("buy");
     const DONATE = ns.args.includes("donate");
     const ALL    = ns.args.includes("all");
     const NFG    = ns.args.includes("nfg");
+    const bIdx   = ns.args.indexOf("--budget");
+    const BUDGET_ARG = bIdx >= 0 ? Number(ns.args[bIdx + 1]) : NaN;
     const S = ns.singularity;
     const NFG_NAME = "NeuroFlux Governor", REDPILL = "The Red Pill";
 
@@ -54,33 +65,36 @@ export async function main(ns) {
             const rep = S.getFactionRep(f);
             const prev = cand.get(aug);
             if (!prev || rep > prev._rep) {
-                let base = 0;
+                let base = 0, stats = {};
                 try { base = S.getAugmentationBasePrice(aug); } catch (e) { base = 0; }
-                cand.set(aug, { aug, faction: f, _rep: rep, base, repReq: S.getAugmentationRepReq(aug), prereqs: S.getAugmentationPrereq(aug) });
+                try { stats = S.getAugmentationStats(aug); } catch (e) { stats = {}; }
+                cand.set(aug, {
+                    aug, faction: f, _rep: rep, base, value: augValue(stats),
+                    repReq: S.getAugmentationRepReq(aug), prereqs: S.getAugmentationPrereq(aug),
+                });
             }
         }
     }
 
     // Only augs whose prerequisites are already INSTALLED are buyable this round.
-    //
-    // ORDER: most-expensive BASE COST first. This used to sort by repReq ascending, which is close to
-    // cheapest-money-first and is the WORST possible order. Each queued aug multiplies the next one's
-    // money price by 1.9 (AugmentationHelpers.ts:32-36, MultipleAugMultiplier), so purchase i pays
-    // base_i * 1.9^i. For a fixed basket the total is minimised by pairing the LARGEST base cost with
-    // the SMALLEST exponent -- the rearrangement inequality. Ascending does the exact opposite.
-    //
-    // Measured on the six NiteSec faction-rep augs (bases $2.75b, $2b, $550m, $400m, $30m, $17.5m):
-    //   ascending  (old): $99.4b
-    //   descending (new): $12.10b     -- 8.2x cheaper for the identical set.
-    // It also fits MORE augs in a fixed budget, because the expensive ones are exactly the ones that
-    // explode under a high exponent. At $1.81b, ascending buys 3 and cannot afford ADR-V2 (the best
-    // of them); descending buys all 4 for $1.538b.
-    //
-    // Unaffordable augs are skipped without consuming an exponent -- the multiplier below is
-    // 1.9^bought.length, not 1.9^index -- so a skip costs nothing for the ones that follow.
-    const list = [...cand.values()]
-        .filter(c => c.prereqs.every(p => installed.has(p)))
-        .sort((a, b) => (b.base - a.base) || (a.repReq - b.repReq));
+    const buyable = [...cand.values()].filter(c => c.prereqs.every(p => installed.has(p)));
+
+    // SELECTION vs ORDERING -- two decisions, two keys. See lib/aug-plan.js.
+    //   ordering:  base cost DESCENDING is cheapest for a fixed basket (rearrangement inequality),
+    //              because purchase i costs base_i * 1.9^i.
+    //   selection: must be VALUE PER DOLLAR. Selecting by cost buys the dearest augs on the board,
+    //              which is how a $7.21b round bought PCMatrix ($2b for faction_rep 1.08) while
+    //              skipping S.N.A ($30m for 1.15).
+    // selectRound does both: greedy on density, returned in purchase order.
+    const money0 = ns.getPlayer().money;
+    const budget = Number.isFinite(BUDGET_ARG) && BUDGET_ARG > 0 ? BUDGET_ARG : money0;
+    const affordableByRep = buyable.filter(c => c._rep >= c.repReq);
+    // The donate path can manufacture rep, so it can't be pre-selected against a rep filter --
+    // fall back to the whole buyable set, ordered cheapest-for-the-basket.
+    const list = DONATE
+        ? buyable.sort((a, b) => (b.base - a.base) || (a.repReq - b.repReq))
+        : selectRound(affordableByRep, budget);
+    const planCost = DONATE ? null : roundCost(list.map(c => c.base));
 
     const bought = [], blockedRep = [], blockedMoney = [];
     let money = ns.getPlayer().money, spent = 0, donated = 0;
@@ -110,9 +124,18 @@ export async function main(ns) {
 
     // ---- report ----
     ns.tprint("=== augbuy " + (DO_BUY ? "(PURCHASED)" : "(DRY RUN -- add 'buy' to commit)") + " ===");
+    if (!DONATE) {
+        ns.tprint("budget $" + fmt(budget) + (Number.isFinite(BUDGET_ARG) && BUDGET_ARG > 0
+            ? "  (--budget; your CASH is $" + fmt(money0) + ")" : "  (cash -- pass --budget <net worth> to plan against positions too)"));
+        if (planCost !== null && planCost > money0) {
+            ns.tprint("LIQUIDATE FIRST: this plan needs $" + fmt(planCost) + " but you hold $" + fmt(money0)
+                + " in cash. Panel -> Trader -> SELL ALL, then re-run.");
+        }
+    }
     ns.tprint((DO_BUY ? "bought " : "would buy ") + bought.length + " aug(s)  |  money $" + fmt(spent - donated)
         + (donated > 0 ? "  + donations $" + fmt(donated) : "") + "  |  total $" + fmt(spent));
-    for (const b of bought) ns.tprint("  + " + b.aug + "  [" + b.faction + "]  $" + fmt(b.price));
+    for (const b of bought) ns.tprint("  + " + b.aug.padEnd(38) + " [" + b.faction + "]  $" + fmt(b.price)
+        + "   value " + (b.value || 0).toFixed(3) + "  (base $" + fmt(b.base) + ")");
     if (blockedRep.length) {
         ns.tprint("blocked on REP (" + blockedRep.length + ")" + (DONATE ? "" : " -- add 'donate' if favor>=150") + ":");
         for (const c of blockedRep) ns.tprint("  - " + c.aug + "  [" + c.faction + "]  need " + fmt(c.repReq) + " rep, have " + fmt(c.rep));
