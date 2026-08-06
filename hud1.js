@@ -574,7 +574,12 @@ export async function main(ns) {
             const raw = ns.read("gang-data.txt");
             if (raw && raw.length > 0) gRead = JSON.parse(raw);
         } catch (e) {}
-        if (!gRead || !Array.isArray(gRead.members)) {
+        const nodeStart = resetInfo && resetInfo.lastNodeReset;
+        if (fromPreviousNode(gRead, nodeStart)) {
+            lines.push("GANG: (gang-data.txt is from a PREVIOUS BitNode -- ignore. gang.js has not"
+                + " written since this node began; there is no gang yet.)");
+            gRead = null;
+        } else if (!gRead || !Array.isArray(gRead.members)) {
             // NEVER skip silently. An absent section is indistinguishable from a section that has
             // nothing to say, and the reader cannot tell which script is at fault. The whole point of
             // this snapshot is that a missing thing SAYS it is missing -- same reason augstat's row
@@ -637,7 +642,10 @@ export async function main(ns) {
             const raw = ns.read("corp-data.txt");
             if (raw && raw.length > 0) cRead = JSON.parse(raw);
         } catch (e) {}
-        if (!cRead || !Array.isArray(cRead.divisions)) {
+        if (fromPreviousNode(cRead, nodeStart)) {
+            lines.push("CORP: (corp-data.txt is from a PREVIOUS BitNode -- ignore.)");
+            cRead = null;
+        } else if (!cRead || !Array.isArray(cRead.divisions)) {
             lines.push("CORP: (no corp-data.txt -- corp.js not running, or a build older than the one"
                 + " that emits it. Restart corp.js.)");
         } else {
@@ -690,7 +698,11 @@ export async function main(ns) {
             const raw = ns.read("augstat-data.txt");
             if (raw && raw.length > 0) augRead = JSON.parse(raw);
         } catch (e) {}
-        if (!augRead || !Array.isArray(augRead.lines)) {
+        if (fromPreviousNode(augRead, nodeStart)) {
+            lines.push("AUGSTAT: (capture is from a PREVIOUS BitNode -- factions, rep and owned augs"
+                + " all reset on node exit, so every number in it is wrong. Re-run augstat.js.)");
+            augRead = null;
+        } else if (!augRead || !Array.isArray(augRead.lines)) {
             lines.push("AUGSTAT: (none captured -- run augstat.js to fold the aug plan into this snapshot)");
         } else {
             const aage = Math.floor((Date.now() - (augRead.ts || 0)) / 1000);
@@ -778,6 +790,11 @@ export async function main(ns) {
             }
         } catch (e) {}
         statusText = lines.join("\n");
+        // Persist to the game filesystem so tools/rfa-sync.mjs can pull it to disk. Without this the
+        // sync only sees snap.js's status/snapshot.txt, which is a DIFFERENT and leaner report -- no
+        // gang member table, no CORP block, no AUGSTAT -- so the richer view would still have to be
+        // hand-downloaded. ns.write is 0GB, so this costs nothing.
+        try { ns.write("status/bb-status.txt", statusText, "w"); } catch (e) {}
 
         // --- render ---
         ns.clearLog();
@@ -891,6 +908,17 @@ export async function main(ns) {
 }
 
 /** Compact age for the snapshot's one-shot sections. */
+/** True when a raw data file predates the current BitNode. lib/modules.js applies this to status
+ *  files via readStatus/isGhostStatus, but gang-data.txt / corp-data.txt / augstat-data.txt are read
+ *  directly and bypassed it -- which is why the GANG block rendered BN2 numbers for 20+ hours after
+ *  the node change, advertising $61.84m/s of income from a gang that no longer existed. Stale is
+ *  survivable; wrong-node is not, because it reads as current. */
+function fromPreviousNode(rec, lastNodeReset) {
+    if (!rec || typeof rec.ts !== "number") return false;
+    if (!Number.isFinite(lastNodeReset) || lastNodeReset <= 0) return false;
+    return rec.ts < lastNodeReset;
+}
+
 function fmtAge(sec) {
     if (sec < 60) return sec + "s";
     if (sec < 3600) return Math.floor(sec / 60) + "m";
