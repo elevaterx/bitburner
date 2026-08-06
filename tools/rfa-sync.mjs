@@ -218,6 +218,21 @@ const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].repla
 if (isMain) {
   const opts = parseArgs(process.argv.slice(2));
   const server = startServer(opts, (files) => writeFiles(opts.out, files, opts.verbose));
+  // A raw EADDRINUSE throw dumps an unhandled 'error' event and a Node stack trace, which says
+  // nothing about the actual cause: another copy of this script is already running and holding the
+  // port. Say that instead -- the stack trace is noise for the one person who will ever hit this.
+  server.on("error", (err) => {
+    if (err && err.code === "EADDRINUSE") {
+      console.error("[rfa] port " + opts.port + " is already in use.");
+      console.error("[rfa] Another rfa-sync is almost certainly still running (check other terminals).");
+      console.error("[rfa] Windows:  Get-Process -Id (Get-NetTCPConnection -LocalPort " + opts.port +
+                    " -State Listen).OwningProcess");
+      console.error("[rfa] Then stop it, or start this one on a different --port (and repoint the game).");
+    } else {
+      console.error("[rfa] server error:", err && err.message ? err.message : err);
+    }
+    process.exit(1);
+  });
   server.listen(opts.port, "127.0.0.1", () => {
     console.log("[rfa] listening on 127.0.0.1:" + opts.port);
     console.log("[rfa] include: " + opts.include.join(", ") + "   out: " + opts.out);
