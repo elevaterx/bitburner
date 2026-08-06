@@ -96,7 +96,69 @@ function ensureAll(ns, cfg, flags, vlog, safe) {
   ensureInvestment(ns, cfg, vlog, safe);
 
   const info = c.getCorporation();
-  writeStatus(ns, "corp", { line: fmtMoney(info.funds) + "  rev " + fmtMoney(info.revenue) + "/s  div " + info.divisions.length });
+  writeStatus(ns, "corp", { line: fmtMoney(info.funds) + "  rev " + fmtMoney(info.revenue) + "/s"
+    + "  profit " + fmtMoney(info.revenue - info.expenses) + "/s  div " + info.divisions.length });
+  emitCorpData(ns, c, info, cfg, safe);
+}
+
+/** Write corp-data.txt for the snapshot, mirroring gang.js's gang-data.txt pattern.
+ *
+ *  WHY MORE THAN ONE LINE. "rev $56.86k/s" alone cannot answer the only questions that matter:
+ *    - Is it PROFITABLE? revenue is gross; a division can post good revenue and burn funds.
+ *    - Is a warehouse FULL? production silently stalls at 100% and revenue just stops climbing.
+ *    - Is the office STARVED? avgEnergy/avgMorale below ~90 drops production hard.
+ *    - How far to the next unlock? Tobacco is a $20b industry cost, so funds-vs-target is the
+ *      single number that says whether to keep waiting or change strategy.
+ *  Every one of those is a silent failure -- the corp keeps "running" and the one-line status
+ *  looks identical. Same reason gang.js emits a member table instead of a summary. */
+function emitCorpData(ns, c, info, cfg, safe) {
+  try {
+    const divisions = [];
+    for (const dn of info.divisions) {
+      const d = safe(() => c.getDivision(dn));
+      if (!d) continue;
+      const cities = [];
+      for (const city of (d.cities || [])) {
+        const w = safe(() => c.getWarehouse(dn, city));
+        const o = safe(() => c.getOffice(dn, city));
+        cities.push({
+          city,
+          whLevel: w ? w.level : null,
+          whUsed: w ? w.sizeUsed : null,
+          whSize: w ? w.size : null,
+          smart: w ? !!w.smartSupplyEnabled : null,
+          employees: o ? o.numEmployees : null,
+          officeSize: o ? o.size : null,
+          morale: o ? o.avgMorale : null,
+          energy: o ? o.avgEnergy : null,
+        });
+      }
+      divisions.push({
+        name: dn,
+        industry: d.industry,
+        revenue: d.lastCycleRevenue, expenses: d.lastCycleExpenses,
+        productionMult: d.productionMult, research: d.researchPoints,
+        adverts: d.numAdVerts, awareness: d.awareness, popularity: d.popularity,
+        products: d.products || [], makesProducts: !!d.makesProducts, maxProducts: d.maxProducts || 0,
+        cities,
+      });
+    }
+    // next capability gate -- what the corp is currently saving toward, and how far off it is
+    let nextGate = null;
+    if (!info.divisions.includes(PRODUCT_DIVISION)) {
+      const cost = safe(() => c.getIndustryData(PRODUCT_INDUSTRY).startingCost);
+      if (cost) nextGate = { what: PRODUCT_DIVISION + " (" + PRODUCT_INDUSTRY + ")", cost };
+    }
+    ns.write("corp-data.txt", JSON.stringify({
+      ts: Date.now(),
+      name: info.name, public: !!info.public, state: info.nextState,
+      funds: info.funds, revenue: info.revenue, expenses: info.expenses,
+      valuation: info.valuation, sharePrice: info.sharePrice,
+      numShares: info.numShares, totalShares: info.totalShares,
+      dividendRate: info.dividendRate, investorRound: safe(() => c.getInvestmentOffer().round) || null,
+      divisions, nextGate,
+    }), "w");
+  } catch (e) { /* diagnostics must never break the manager */ }
 }
 
 function ensureDivision(ns, name, industry, vlog) {

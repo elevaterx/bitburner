@@ -626,6 +626,63 @@ export async function main(ns) {
             }
         }
 
+        // --- corp detail (written by corp.js each state tick) ---------------------------
+        // One line of "rev $X/s" cannot distinguish a healthy corp from a stalled one. The three
+        // failure modes here are all SILENT: negative profit behind positive revenue, a warehouse
+        // at 100% (production just stops), and a starved office (energy/morale below ~90 gut
+        // output). Each is flagged inline rather than left for the reader to compute.
+        lines.push("");
+        let cRead = null;
+        try {
+            const raw = ns.read("corp-data.txt");
+            if (raw && raw.length > 0) cRead = JSON.parse(raw);
+        } catch (e) {}
+        if (!cRead || !Array.isArray(cRead.divisions)) {
+            lines.push("CORP: (no corp-data.txt -- corp.js not running, or a build older than the one"
+                + " that emits it. Restart corp.js.)");
+        } else {
+            const cage = Math.floor((Date.now() - (cRead.ts || 0)) / 1000);
+            const profit = (cRead.revenue || 0) - (cRead.expenses || 0);
+            lines.push("CORP  " + cRead.name + "  " + (cRead.public ? "PUBLIC" : "private")
+                + "  valuation $" + fmt(cRead.valuation)
+                + (cRead.investorRound ? "  round " + cRead.investorRound : "")
+                + (cage > 120 ? "   [stale " + fmtAge(cage) + "]" : ""));
+            lines.push("  funds $" + fmt(cRead.funds) + "   rev $" + fmt(cRead.revenue) + "/s"
+                + "   exp $" + fmt(cRead.expenses) + "/s"
+                + "   profit $" + fmt(profit) + "/s" + (profit <= 0 ? "  <-- BURNING FUNDS" : ""));
+            if (cRead.public) {
+                lines.push("  shares " + fmt(cRead.numShares) + "/" + fmt(cRead.totalShares)
+                    + "  price $" + fmt(cRead.sharePrice) + "  dividend " + ((cRead.dividendRate || 0) * 100).toFixed(1) + "%");
+            }
+            for (const d of cRead.divisions) {
+                const dp = (d.revenue || 0) - (d.expenses || 0);
+                lines.push("  " + d.name + " (" + d.industry + ")  profit $" + fmt(dp) + "/s"
+                    + "  prodMult " + (d.productionMult || 0).toFixed(2)
+                    + "  research " + fmt(d.research)
+                    + "  adverts " + d.adverts
+                    + (d.makesProducts ? "  products " + d.products.length + "/" + d.maxProducts : ""));
+                for (const ct of d.cities) {
+                    const pct = (ct.whSize > 0) ? (ct.whUsed / ct.whSize * 100) : 0;
+                    const warn = [];
+                    if (ct.whSize > 0 && pct >= 95) warn.push("WAREHOUSE FULL");
+                    if (ct.smart === false) warn.push("no smart supply");
+                    if (ct.energy != null && ct.energy < 90) warn.push("energy " + ct.energy.toFixed(0));
+                    if (ct.morale != null && ct.morale < 90) warn.push("morale " + ct.morale.toFixed(0));
+                    lines.push("    " + String(ct.city).padEnd(12)
+                        + "wh " + fmt(ct.whUsed) + "/" + fmt(ct.whSize) + " (" + pct.toFixed(0) + "%)"
+                        + "   office " + ct.employees + "/" + ct.officeSize
+                        + (warn.length ? "   <-- " + warn.join(", ") : ""));
+                }
+            }
+            if (cRead.nextGate) {
+                const need = cRead.nextGate.cost - cRead.funds;
+                const eta = profit > 0 ? "  eta " + fmtAge(need / profit) : "  eta never at current profit";
+                lines.push("  saving for " + cRead.nextGate.what + ": $" + fmt(cRead.funds) + " / $"
+                    + fmt(cRead.nextGate.cost) + "  (" + (cRead.funds / cRead.nextGate.cost * 100).toFixed(0) + "%)"
+                    + (need > 0 ? eta : "  READY"));
+            }
+        }
+
         // --- augstat (written by augstat.js, a ONE-SHOT -- so always stamp the age) ---
         lines.push("");
         let augRead = null;
