@@ -1,1 +1,1 @@
-{"line":"$512m  rev $96.02k/s  profit $51.58k/s  div 1","t":1786027382170}
+{"line":"$517.49m  rev $94.6k/s  profit $49k/s  div 1","t":1786027494208}

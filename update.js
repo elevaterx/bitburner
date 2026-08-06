@@ -28,7 +28,14 @@ const USER = "elevaterx";
 const REPO = "bitburner";
 const BRANCH = "main";
 
-const EXCLUDE_PREFIXES = ["tests/", "node_modules/", "_to_delete/"];
+// status/ is written by the GAME (hud1, snap.js, every module's writeStatus) and pulled to disk by
+// tools/rfa-sync.mjs. It must never travel back the other way. Without this exclusion the loop is:
+// game writes status -> sync copies to disk -> git commits it -> update.js redeploys it into the
+// game, overwriting LIVE state with whatever was last committed. The dangerous file is
+// status/panel-enabled.txt: it is config rather than display, carries no timestamp, and readEnabled
+// has no ghost/BitNode guard -- so a stale copy silently changes which modules auto-launch. A
+// committed status/snapshot.txt from BN2 was already sitting in the tree when this was added.
+const EXCLUDE_PREFIXES = ["tests/", "node_modules/", "_to_delete/", "status/", "tools/"];
 const TREE_TMP = "update-tree.txt"; // temp landing for the tree JSON (.txt so wget accepts it)
 
 /** Should this tree entry be pulled into the game? Pure + exported for tests.

@@ -1,14 +1,14 @@
-=== bb-status @ 2026-08-06 14:43:00 ===
+=== bb-status @ 2026-08-06 14:44:55 ===
 BN3  SF1.3 SF2.1 SF4.3 SF5.3 SF8.1 SF9.1   augs 0  since install 13.8h  since node 13.8h
-level 396  cash $65.31b  income $120.83m/s  share off  rooted 49  contracts 0
-combat 221/221/226/224  cha 15  karma -35985  kills 12232  city Aevum  factions 5
-xp/s 0  lvl/s 0.00  (avg over 59s)
+level 396  cash $65.31b  income $118.86m/s  share off  rooted 49  contracts 0
+combat 221/221/226/224  cha 15  karma -36076  kills 12270  city Aevum  factions 5
+xp/s 0  lvl/s 0.00  (avg over 60s)
 
 STOCKS
   trader     running   mode 4S long+short
-  net worth  $1.34t   (cash $65.31b + market $1.28t)
-  positions  8L / 0S   top FLCM $305.00b
-  net worth/s $136.16m  (avg over 59s)
+  net worth  $1.37t   (cash $65.31b + market $1.30t)
+  positions  8L / 0S   top FLCM $302.46b
+  net worth/s $225.93m  (avg over 60s)
 
 RAM
   home    800GB / 4.10TB   20%
@@ -17,7 +17,7 @@ RAM
 
 THREADS
   deployed 0  batch 0  idle 1442  total 1442
-  harvest income $0/s   batch income $120.83m/s
+  harvest income $0/s   batch income $118.86m/s
 
 RAM BY SCRIPT
   corp.js                   1 threads       564GB
@@ -38,22 +38,22 @@ BATCH (0 servers)
 CONTROLLERS
   (none)
 
-(hud2 data is stale by 132163s -- hud2 not running)
+(hud2 data is stale by 132278s -- hud2 not running)
 
 GANG: (gang-data.txt is from a PREVIOUS BitNode -- ignore. gang.js has not written since this node began; there is no gang yet.)
 
-CORP  Bitrunner Industries  private  valuation $29.93b  round 1
-  funds $512.00m   rev $96.0k/s   exp $44.4k/s   profit $51.6k/s
-  Agriculture (Agriculture)  profit $51.6k/s  prodMult 6.00  research 44  adverts 0
-    Sector-12   wh 158/160 (99%)   office 6/6   <-- WAREHOUSE FULL
-    Aevum       wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
-    Chongqing   wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
-    New Tokyo   wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
-    Ishima      wh 159/160 (99%)   office 3/3   <-- WAREHOUSE FULL
-    Volhaven    wh 159/160 (99%)   office 3/3   <-- WAREHOUSE FULL
-  saving for Tobacco (Tobacco): $512.00m / $20.00b  (3%)  eta 4.4d
+CORP  Bitrunner Industries  private  valuation $30.14b  round 1
+  funds $517.49m   rev $94.6k/s   exp $45.6k/s   profit $49.0k/s
+  Agriculture (Agriculture)  profit $49.0k/s  prodMult 6.00  research 47  adverts 0
+    Sector-12   wh 160/160 (100%)   office 6/6   <-- WAREHOUSE FULL
+    Aevum       wh 160/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+    Chongqing   wh 160/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+    New Tokyo   wh 160/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+    Ishima      wh 160/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+    Volhaven    wh 160/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+  saving for Tobacco (Tobacco): $517.49m / $20.00b  (3%)  eta 4.6d
 
-AUGSTAT (captured 27m ago)
+AUGSTAT (captured 29m ago)
   === augstat ===  joined: The Black Hand, NiteSec, The Syndicate, Slum Snakes, CyberSec
   cash: $51.48b   owned/queued augs: 0
   
@@ -131,28 +131,27 @@ AUGSTAT (captured 27m ago)
   note: each aug you QUEUE multiplies the next one's money price by 1.9x. Buy most-expensive
         first (augbuy.js does), and never pad a round with cheap augs you don't need.
 
-COORD HEALTH: stale by 97862s (coord stopped?)
+COORD HEALTH: stale by 97976s (coord stopped?)
 
 MODULES (BN3, auto):
   [on] Gang        forming - karma/faction  39.2GB
-  [on] Corporation $512m  rev $96.02k/s  profit $51.58k/s  div 1  563.9GB
-  [on] IPvGO       playing Slum Snakes  118-3 (streak 84)  1500it  18.9GB
+  [on] Corporation $517.49m  rev $94.6k/s  profit $49k/s  div 1  563.9GB
+  [on] IPvGO       playing Slum Snakes  120-3 (streak 86)  1500it  18.9GB
 WORKERS:
   Coordinator stopped 
-  Trader      1h41    36.2GB  
-  Singularity 1h37    57.5GB  
-  Hacknet     11h06   17.8GB  8/20n  0 h/s  $0/s  PAYBACK<=3600s
+  Trader      1h43    36.2GB  
+  Singularity 1h39    57.5GB  
+  Hacknet     11h08   17.8GB  8/20n  0 h/s  $0/s  PAYBACK<=3600s
   Share       stopped 
 
 IPvGO RECORD (wins-losses  streak  bonus):
   Netburners         22-99  streak    4  15.62%
-  Slum Snakes        118-3  streak   84  42.14%
+  Slum Snakes        120-3  streak   86  42.42%
   The Black Hand      16-7  streak   -1  10.44%
   Tetrads          233-223  streak   -2  32.04%
   Daedalus            14-8  streak    4  15.12%
   Illuminati          5-17  streak   -4  7.77%
 IPvGO LAST 12 GAMES (result  moves/iters/ms/fallbacks):
-  Slum Snakes   W     44:38.5 k3.5  43mv 1407it 378ms fb0
   Slum Snakes   W     41:39.5 k3.5  41mv 1198it 485ms fb0
   Slum Snakes   W     55:20.5 k3.5  63mv 660it 603ms fb0
   Slum Snakes   W     43:37.5 k3.5  45mv 1175it 495ms fb0
@@ -164,3 +163,4 @@ IPvGO LAST 12 GAMES (result  moves/iters/ms/fallbacks):
   Slum Snakes   W     42:36.5 k3.5  46mv 1209it 491ms fb0
   Slum Snakes   W     46:32.5 k3.5  47mv 1100it 547ms fb0
   Slum Snakes   W     46:33.5 k3.5  51mv 1379it 386ms fb0
+  Slum Snakes   W     50:25.5 k3.5  59mv 1231it 563ms fb0

@@ -1,0 +1,6 @@
+# Game-authored runtime state, pulled to disk by tools/rfa-sync.mjs.
+# NEVER commit: update.js would deploy it back into the game and overwrite live state.
+status/
+
+node_modules/
+update-tree.txt

@@ -47,3 +47,16 @@ test("filterRepoFiles: tolerates empty/undefined", () => {
   assert.deepEqual(filterRepoFiles(undefined), []);
   assert.deepEqual(filterRepoFiles([]), []);
 });
+
+test("isWanted excludes status/ -- the game writes it; it must never be deployed back", () => {
+  // The round trip this prevents: game -> rfa-sync -> disk -> git -> update.js -> game.
+  // panel-enabled.txt is the sharp edge: config, no timestamp, no ghost guard in readEnabled.
+  assert.equal(isWanted("status/panel-enabled.txt", "blob"), false);
+  assert.equal(isWanted("status/snapshot.txt", "blob"), false);
+  assert.equal(isWanted("status/bb-status.txt", "blob"), false);
+  // tools/ is host-side Node, not game scripts -- deploying it just wastes game filesystem
+  assert.equal(isWanted("tools/rfa-sync.mjs", "blob"), false);
+  // and the things we DO still want are untouched
+  assert.equal(isWanted("hud1.js", "blob"), true);
+  assert.equal(isWanted("lib/corp-logic.js", "blob"), true);
+});
