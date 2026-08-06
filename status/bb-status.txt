@@ -1,0 +1,166 @@
+=== bb-status @ 2026-08-06 14:40:50 ===
+BN3  SF1.3 SF2.1 SF4.3 SF5.3 SF8.1 SF9.1   augs 0  since install 13.7h  since node 13.7h
+level 396  cash $65.30b  income $123.17m/s  share off  rooted 49  contracts 1
+combat 221/221/226/224  cha 15  karma -35879  kills 12188  city Aevum  factions 5
+xp/s 0  lvl/s 0.00  (avg over 58s)
+
+STOCKS
+  trader     running   mode 4S long+short
+  net worth  $1.32t   (cash $65.30b + market $1.25t)
+  positions  8L / 0S   top FLCM $291.11b
+  net worth/s $89.10m  (avg over 58s)
+
+RAM
+  home    800GB / 4.10TB   20%
+  cloud   0GB / 0GB   0% (0 srv)
+  network 0GB / 1.24TB   0% (40 srv)
+
+THREADS
+  deployed 0  batch 0  idle 1442  total 1442
+  harvest income $0/s   batch income $123.17m/s
+
+RAM BY SCRIPT
+  corp.js                   1 threads       564GB
+  hud1.js                   1 threads        60GB
+  sing.js                   1 threads        58GB
+  gang.js                   1 threads        39GB
+  trader.js                 1 threads        36GB
+  go.js                     1 threads        19GB
+  hacknet.js                1 threads        18GB
+  panel.js                  1 threads         6GB
+
+HARVEST (0 servers)
+  (none)
+
+BATCH (0 servers)
+  (none)
+
+CONTROLLERS
+  (none)
+
+(hud2 data is stale by 132033s -- hud2 not running)
+
+GANG: (gang-data.txt is from a PREVIOUS BitNode -- ignore. gang.js has not written since this node began; there is no gang yet.)
+
+CORP  Bitrunner Industries  private  valuation $29.79b  round 1
+  funds $505.48m   rev $93.6k/s   exp $46.0k/s   profit $47.6k/s
+  Agriculture (Agriculture)  profit $47.6k/s  prodMult 6.00  research 40  adverts 0
+    Sector-12   wh 158/160 (99%)   office 6/6   <-- WAREHOUSE FULL
+    Aevum       wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+    Chongqing   wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+    New Tokyo   wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+    Ishima      wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+    Volhaven    wh 159/160 (99%)   office 3/3   <-- WAREHOUSE FULL
+  saving for Tobacco (Tobacco): $505.48m / $20.00b  (3%)  eta 4.7d
+
+AUGSTAT (captured 25m ago)
+  === augstat ===  joined: The Black Hand, NiteSec, The Syndicate, Slum Snakes, CyberSec
+  cash: $51.48b   owned/queued augs: 0
+  
+  --- The Black Hand   rep 1.6k   (11 unowned) ---
+     NeuroFlux Governor                 rep      1.5k  $    2.25m   h 1.01 h_exp 1.01 h_speed 1.01 h_money 1.01 h_chance 1.01 h_grow 1.01
+    *Artificial Synaptic Potentiation   rep     18.8k  $  240.00m   h_exp 1.05 h_speed 1.02 h_chance 1.05
+    *Embedded Netburner Module          rep     45.0k  $  750.00m   h 1.08
+    *Neuralstimulator                   rep    150.0k  $    9.00b   h_exp 1.12 h_speed 1.02 h_chance 1.10
+    *Cranial Signal Processors - Gen III rep    150.0k  $    1.65b   h 1.09 h_speed 1.02 h_money 1.15
+    *Enhanced Myelin Sheathing          rep    300.0k  $    4.13b   h 1.08 h_exp 1.10 h_speed 1.03
+    *The Black Hand                     rep    300.0k  $    1.65b   h 1.10 h_speed 1.02 h_money 1.10
+    *DataJack                           rep    337.5k  $    1.35b   h_money 1.25
+    *Cranial Signal Processors - Gen IV rep    375.0k  $    3.30b   h_speed 1.02 h_money 1.20 h_grow 1.25
+    *Embedded Netburner Module Core Implant rep    525.0k  $    7.50b   h 1.07 h_exp 1.07 h_speed 1.03 h_money 1.10 h_chance 1.03
+    *Magnetism Amplifier                rep     45.0k  $  750.00m
+    (* = insufficient rep)
+  
+  --- NiteSec   rep 21.6k   (11 unowned) ---
+     NeuroFlux Governor                 rep      1.5k  $    2.25m   h 1.01 h_exp 1.01 h_speed 1.01 h_money 1.01 h_chance 1.01 h_grow 1.01
+     BitWire                            rep     11.3k  $   30.00m   h 1.05
+     Artificial Synaptic Potentiation   rep     18.8k  $  240.00m   h_exp 1.05 h_speed 1.02 h_chance 1.05
+    *Cranial Signal Processors - Gen I  rep     30.0k  $  210.00m   h 1.05 h_speed 1.01
+    *Neurotrainer II                    rep     30.0k  $  135.00m   h_exp 1.15
+    *Embedded Netburner Module          rep     45.0k  $  750.00m   h 1.08
+    *Cranial Signal Processors - Gen II rep     56.3k  $  375.00m   h 1.07 h_speed 1.02 h_chance 1.05
+    *Neural-Retention Enhancement       rep     60.0k  $  750.00m   h_exp 1.25
+    *CRTX42-AA Gene Modification        rep    135.0k  $  675.00m   h 1.08 h_exp 1.15
+    *Cranial Signal Processors - Gen III rep    150.0k  $    1.65b   h 1.09 h_speed 1.02 h_money 1.15
+    *DataJack                           rep    337.5k  $    1.35b   h_money 1.25
+    (* = insufficient rep)
+  
+  --- The Syndicate   rep 39.2k   (18 unowned) ---
+     NeuroFlux Governor                 rep      1.5k  $    2.25m   h 1.01 h_exp 1.01 h_speed 1.01 h_money 1.01 h_chance 1.01 h_grow 1.01
+     Wired Reflexes                     rep      3.8k  $    7.50m
+     ADR-V1 Pheromone Gene              rep     11.3k  $   52.50m
+     Augmented Targeting I              rep     15.0k  $   45.00m
+     Combat Rib I                       rep     22.5k  $   71.25m
+     Augmented Targeting II             rep     26.3k  $  127.50m
+     HemoRecirculator                   rep     30.0k  $  135.00m
+     BrachiBlades                       rep     37.5k  $  270.00m
+    *Power Recirculation Core           rep     75.0k  $  540.00m   h 1.05 h_exp 1.10
+    *Combat Rib II                      rep     56.3k  $  195.00m
+    *Augmented Targeting III            rep     82.5k  $  345.00m
+    *Combat Rib III                     rep    105.0k  $  360.00m
+    *Nanofiber Weave                    rep    112.5k  $  375.00m
+    *The Shadow's Simulacrum            rep    112.5k  $    1.20b
+    *Bionic Spine                       rep    135.0k  $  375.00m
+    *Bionic Legs                        rep    450.0k  $    1.13b
+    *The Illustrated Primer             rep    562.5k  $   10.13b
+    *NEMEAN Subdermal Weave             rep     2.63m  $    9.75b
+    (* = insufficient rep)
+  
+  --- Slum Snakes   rep 449   (8 unowned) ---
+    *NeuroFlux Governor                 rep      1.5k  $    2.25m   h 1.01 h_exp 1.01 h_speed 1.01 h_money 1.01 h_chance 1.01 h_grow 1.01
+    *Wired Reflexes                     rep      3.8k  $    7.50m
+    *LuminCloaking-V1 Skin Implant      rep      4.5k  $   15.00m
+    *Augmented Targeting I              rep     15.0k  $   45.00m
+    *LuminCloaking-V2 Skin Implant      rep     15.0k  $   90.00m
+    *Neural Wit Amplifier               rep     15.0k  $   30.00m
+    *Combat Rib I                       rep     22.5k  $   71.25m
+    *SmartSonar Implant                 rep     67.5k  $  225.00m
+    (* = insufficient rep)
+  
+  --- CyberSec   rep 50.7k   (6 unowned) ---
+     NeuroFlux Governor                 rep      1.5k  $    2.25m   h 1.01 h_exp 1.01 h_speed 1.01 h_money 1.01 h_chance 1.01 h_grow 1.01
+     Neurotrainer I                     rep      3.0k  $   12.00m   h_exp 1.10
+     Synaptic Enhancement Implant       rep      6.0k  $   22.50m   h_speed 1.03
+     BitWire                            rep     11.3k  $   30.00m   h 1.05
+     Cranial Signal Processors - Gen I  rep     30.0k  $  210.00m   h 1.05 h_speed 1.01
+    *Cranial Signal Processors - Gen II rep     56.3k  $  375.00m   h 1.07 h_speed 1.02 h_chance 1.05
+    (* = insufficient rep)
+  
+  note: NeuroFluxGovernor is repeatable (stacks), boosts ALL stats incl hacking level/exp.
+        Standard endgame XP/level multiplier -- buy in bulk once a faction has the rep.
+  note: each aug you QUEUE multiplies the next one's money price by 1.9x. Buy most-expensive
+        first (augbuy.js does), and never pad a round with cheap augs you don't need.
+
+COORD HEALTH: stale by 97732s (coord stopped?)
+
+MODULES (BN3, auto):
+  [on] Gang        forming - karma/faction  39.2GB
+  [on] Corporation $505.48m  rev $93.58k/s  profit $47.56k/s  div 1  563.9GB
+  [on] IPvGO       playing Slum Snakes  116-3 (streak 82)  1500it  18.9GB
+WORKERS:
+  Coordinator stopped 
+  Trader      1h39    36.2GB  
+  Singularity 1h35    57.5GB  
+  Hacknet     11h04   17.8GB  8/20n  0 h/s  $0/s  PAYBACK<=3600s
+  Share       stopped 
+
+IPvGO RECORD (wins-losses  streak  bonus):
+  Netburners         22-99  streak    4  15.62%
+  Slum Snakes        116-3  streak   82  41.84%
+  The Black Hand      16-7  streak   -1  10.44%
+  Tetrads          233-223  streak   -2  32.04%
+  Daedalus            14-8  streak    4  15.12%
+  Illuminati          5-17  streak   -4  7.77%
+IPvGO LAST 12 GAMES (result  moves/iters/ms/fallbacks):
+  Slum Snakes   W     39:34.5 k3.5  39mv 1278it 453ms fb0
+  Slum Snakes   W     51:21.5 k3.5  55mv 1333it 518ms fb0
+  Slum Snakes   W     44:38.5 k3.5  43mv 1407it 378ms fb0
+  Slum Snakes   W     41:39.5 k3.5  41mv 1198it 485ms fb0
+  Slum Snakes   W     55:20.5 k3.5  63mv 660it 603ms fb0
+  Slum Snakes   W     43:37.5 k3.5  45mv 1175it 495ms fb0
+  Slum Snakes   W     43:34.5 k3.5  51mv 1119it 585ms fb0
+  Slum Snakes   W     45:31.5 k3.5  46mv 1225it 503ms fb0
+  Slum Snakes   W     45:35.5 k3.5  46mv 867it 531ms fb0
+  Slum Snakes   W     65:15.5 k3.5  65mv 1227it 556ms fb0
+  Slum Snakes   W     49:23.5 k3.5  47mv 1364it 422ms fb0
+  Slum Snakes   W     42:36.5 k3.5  46mv 1209it 491ms fb0
