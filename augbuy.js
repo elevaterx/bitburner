@@ -3,7 +3,7 @@
  *  one you can afford (rep + money). Picks the basket by VALUE PER DOLLAR and then buys it
  *  most-expensive-first -- see lib/aug-plan.js for why those are two different decisions and what
  *  goes wrong when you conflate them. With "donate" it buys the missing
- *  rep via donations (favor >= 150 factions only -- the big money sink). DRY RUN by default.
+ *  rep via donations (favor >= ns.getFavorToDonate() -- 150 by default, 75 in BN3). DRY RUN by default.
  *
  *  Buy in SMALL rounds then INSTALL: each aug queued in a round multiplies the next one's
  *  MONEY price by 1.9x, so one huge round blows up cost. This buys until the next is
@@ -12,7 +12,7 @@
  *  usage: run augbuy.js [buy] [donate] [all] [nfg] [--why] [--budget N] [--cutoff K]
  *    (no flags)  DRY RUN -- report what it WOULD buy / donate and what's blocked
  *    buy         actually purchase
- *    donate      buy missing rep via donation (favor >= 150 only) -- can cost trillions+
+ *    donate      buy missing rep via donation (favor >= getFavorToDonate(); 75 in BN3) -- can cost trillions+
  *    all         include non-hacking augs too (for the Daedalus 30-aug count)
  *    nfg         also buy NeuroFlux Governor levels (expensive; buy deliberately)
  *    --why       print the per-slot economics of the chosen round: what each aug costs at its
@@ -139,6 +139,13 @@ export async function main(ns) {
     let money = ns.getPlayer().money, spent = 0, donated = 0;
     const repMult = (ns.getPlayer().mults && ns.getPlayer().mults.faction_rep) || 1;
     let fwrg = 1; try { fwrg = ns.getBitNodeMultipliers().FactionWorkRepGain || 1; } catch (e) {}
+    // The donation favor gate is NOT a constant 150. It is
+    //   floor(CONSTANTS.BaseFavorToDonate * currentNodeMults.FavorToDonateToFaction)
+    // (Faction/formulas/donation.ts:17), and ns.getFavorToDonate() returns exactly that. BN3 sets
+    // FavorToDonateToFaction: 0.5, so the real gate there is 75 -- hardcoding 150 silently refused
+    // to donate across the entire 75..149 band in the one node where donation matters most, since
+    // BN3 also triples AugmentationRepCost.
+    let favorGate = 150; try { favorGate = ns.getFavorToDonate(); } catch (e) {}
 
     for (const c of list) {
         let rep = S.getFactionRep(c.faction);
@@ -147,7 +154,7 @@ export async function main(ns) {
             let favor = 0; try { favor = S.getFactionFavor(c.faction); } catch (e) {}
             const need = (c.repReq - rep) * 1e6 / repMult / fwrg * 1.02;   // +2% buffer
             const price0 = DO_BUY ? S.getAugmentationPrice(c.aug) : S.getAugmentationBasePrice(c.aug) * queueMult * Math.pow(1.9, bought.length);
-            if (favor >= 150 && money >= need + price0) {
+            if (favor >= favorGate && money >= need + price0) {
                 if (DO_BUY) S.donateToFaction(c.faction, need);
                 money -= need; donated += need; spent += need;
                 rep = DO_BUY ? S.getFactionRep(c.faction) : c.repReq;
