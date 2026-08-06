@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   AUG_PRICE_MULT, DEFAULT_WEIGHTS, BASE_WEIGHTS, augValue, valueDensity, roundCost, selectRound,
   moneyFarmWeight, nodeWeights, roundEconomics,
+  skillBracket, expChannelWeight,
 } from "../lib/aug-plan.js";
 
 test("augValue: weighted log-sum, ignores mults <= 1 and unknown keys", () => {
@@ -239,4 +240,42 @@ test("roundEconomics: priceScale and degenerate inputs", () => {
   assert.equal(scaled[0].escalation, 10);
   // zero-value augs report Infinity rather than dividing by zero
   assert.equal(roundEconomics([{ aug: "z", base: 1, value: 0 }])[0].perValue, Infinity);
+});
+
+test("expChannelWeight: exp-side mults are worth 32/bracket of a hacking-side one", () => {
+  // level = mult_h * bracket. d(level)/d(ln mult_h) = level; d(level)/d(ln exp) = mult_h*32.
+  assert.ok(Math.abs(skillBracket(2.7e9) - (32 * Math.log(2.7e9 + 534.6) - 200)) < 1e-9);
+  assert.ok(Math.abs(expChannelWeight(500) - 32 / 500) < 1e-12);
+  assert.equal(expChannelWeight(16), 1, "never exceeds 1 -- exp cannot beat the linear channel");
+  assert.equal(expChannelWeight(0), 1, "unknown bracket -> no discount, never worse than before");
+  assert.equal(expChannelWeight(NaN), 1);
+});
+
+test("nodeWeights discounts the whole exp channel, not just hacking_exp", () => {
+  // hacking_speed raises exp/sec and hacking_chance decides full-vs-25% exp: same channel.
+  const w = nodeWeights({ hackingExp: 2.7e9, moneyFarmRunning: false });
+  const x = expChannelWeight(skillBracket(2.7e9));
+  assert.ok(Math.abs(w.hacking_exp - BASE_WEIGHTS.hacking_exp * x) < 1e-12);
+  assert.ok(Math.abs(w.hacking_speed - BASE_WEIGHTS.hacking_speed * x) < 1e-12);
+  assert.ok(Math.abs(w.hacking_chance - BASE_WEIGHTS.hacking_chance * x) < 1e-12);
+  // the two channels that are NOT exp-side are untouched by this discount
+  assert.equal(w.hacking, BASE_WEIGHTS.hacking, "the linear channel keeps full weight");
+  assert.equal(w.faction_rep, BASE_WEIGHTS.faction_rep);
+  // omitting hackingExp must reproduce the old behaviour exactly
+  const old = nodeWeights({ moneyFarmRunning: false });
+  assert.equal(old.hacking_exp, BASE_WEIGHTS.hacking_exp);
+  assert.equal(old.hacking_speed, BASE_WEIGHTS.hacking_speed);
+});
+
+test("BN3 case: the exp channel collapses and hacking-level augs win", () => {
+  const w = nodeWeights({ hackingExp: 2.7e9, scriptHackMoneyGain: 0.2, serverMaxMoney: 0.04,
+                          moneyFarmRunning: false });
+  assert.equal(w.hacking_money, 0, "no farm and BN3 money mults -> worthless");
+  assert.equal(w.hacking_grow, 0);
+  assert.ok(w.hacking_exp < 0.07, "hacking_exp was 1.0; at BN3 bracket it is ~0.065");
+  // ENM Core V3 (h 1.10, h_exp 1.25, h_speed 1.05, h_money 1.40, h_chance 1.10) vs a pure exp aug
+  const core = { hacking: 1.10, hacking_exp: 1.25, hacking_speed: 1.05, hacking_money: 1.40, hacking_chance: 1.10 };
+  const pureExp = { hacking_exp: 1.60 };
+  assert.ok(augValue(core, w) > augValue(pureExp, w) * 3,
+            "a hacking-level aug should dominate a bigger pure-exp aug once the channel is priced");
 });

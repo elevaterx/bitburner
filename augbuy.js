@@ -63,7 +63,10 @@ export async function main(ns) {
     let bnm = null; try { bnm = ns.getBitNodeMultipliers(); } catch (e) {}
     let farmRunning = false;
     try { farmRunning = ns.ps("home").some(p => p.filename === "coordinator.js"); } catch (e) {}
+    let hackExp = undefined;
+    try { const pl = ns.getPlayer(); hackExp = (pl.exp && pl.exp.hacking) || undefined; } catch (e) {}
     const WEIGHTS = nodeWeights({
+        hackingExp: hackExp,
         scriptHackMoneyGain: bnm && bnm.ScriptHackMoneyGain,
         serverMaxMoney: bnm && bnm.ServerMaxMoney,
         moneyFarmRunning: farmRunning,
