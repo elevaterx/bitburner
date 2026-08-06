@@ -15,6 +15,7 @@ import { money as fmtMoney } from "./lib/fmt.js";
 import {
   CORP_CITIES, UPGRADE_PRIORITY, DEFAULT_CORP_CFG,
   distributeJobs, shouldAcceptOffer, upgradesToLevel,
+  warehouseLevelsToBuy, warehouseUpgradeCost, officeTarget,
   PRODUCT_INDUSTRY, PRODUCT_DIVISION, PRODUCT_HQ, RESEARCH_PRIORITY, planProduct,
 } from "./lib/corp-logic.js";
 
@@ -194,9 +195,28 @@ function ensureCity(ns, cfg, division, city, outputs, officeSize, safe, vlog) {
     c.setSmartSupply(div, city, true);
   } catch (e) { return; /* insufficient funds -- retry next tick */ }
 
+  // --- warehouse growth. THE bug this fixes: the old code purchased a warehouse and never
+  // upgraded it, so every city sat at level 1 and pegged 100% full. Production stalls silently
+  // when a warehouse fills -- output has nowhere to go, so revenue just stops climbing and
+  // nothing errors. Budget is split across cities so one city cannot eat the whole treasury.
+  try {
+    const wh = c.getWarehouse(div, city);
+    const budget = (c.getCorporation().funds * cfg.warehouseBudgetFrac) / CORP_CITIES.length;
+    const levels = warehouseLevelsToBuy(wh, budget, cfg);
+    if (levels > 0) {
+      c.upgradeWarehouse(div, city, levels);
+      vlog("warehouse " + div + "/" + city + " +" + levels + " -> L" + (wh.level + levels)
+           + "  ($" + Math.round(warehouseUpgradeCost(wh.level, levels) / 1e6) + "m)");
+    }
+  } catch (e) {}
+
   try {
     const office = c.getOffice(div, city);
-    if (office.size < officeSize) c.upgradeOfficeSize(div, city, officeSize - office.size);
+    // Grow past the START size. The old code compared against the static officeStartSize, so
+    // offices were frozen at 3 seats forever -- and distributeJobs(3) across five roles leaves
+    // Research & Development at 0, which is why researchPoints never moved off zero.
+    const want = Math.max(officeSize, officeTarget(office.size, c.getCorporation().funds, cfg));
+    if (office.size < want) c.upgradeOfficeSize(div, city, want - office.size);
     const size = c.getOffice(div, city).size;
     while (c.getOffice(div, city).numEmployees < size) { if (!c.hireEmployee(div, city)) break; }
     const dist = distributeJobs(c.getOffice(div, city).numEmployees);

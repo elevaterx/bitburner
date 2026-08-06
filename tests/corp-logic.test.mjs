@@ -4,6 +4,7 @@ import {
   distributeJobs, shouldAcceptOffer, upgradesToLevel, amountToReach,
   CORP_CITIES, DEFAULT_CORP_CFG,
   nextProductName, lowestRated, planProduct,
+  warehouseUpgradeCost, warehouseLevelsToBuy, officeTarget,
 } from "../lib/corp-logic.js";
 
 test("distributeJobs: sums exactly to size, non-negative", () => {
@@ -81,4 +82,38 @@ test("planProduct: wait -> make -> replace", () => {
     { name: "Prod-2", developmentProgress: 100, effectiveRating: 40 },
   ];
   assert.deepEqual(planProduct(full, 3), { action: "replace", discontinue: "Prod-1", make: "Prod-3" });
+});
+
+test("warehouseUpgradeCost matches Actions.ts:420 -- 1e9 * 1.07^(level+1+i)", () => {
+  assert.ok(Math.abs(warehouseUpgradeCost(1, 1) - 1e9 * 1.07 ** 2) < 1);
+  assert.ok(Math.abs(warehouseUpgradeCost(1, 2) - (1e9 * 1.07 ** 2 + 1e9 * 1.07 ** 3)) < 1);
+  assert.equal(warehouseUpgradeCost(1, 0), 0);
+  assert.equal(warehouseUpgradeCost(1, -3), 0);
+});
+
+test("warehouseLevelsToBuy: only when constrained, and never over budget", () => {
+  const full = { level: 1, size: 160, sizeUsed: 160 };
+  const half = { level: 1, size: 160, sizeUsed: 80 };
+  // half-empty warehouse gains nothing from more shelves, however rich we are
+  assert.equal(warehouseLevelsToBuy(half, 1e12), 0);
+  // the live case: all six pegged at 100% with $4.82b funds, 35% budget over 6 cities = $281m
+  assert.equal(warehouseLevelsToBuy(full, 281e6), 0, "one level costs $1.14b -- cannot afford yet");
+  assert.equal(warehouseLevelsToBuy(full, 1.15e9), 1);
+  assert.equal(warehouseLevelsToBuy(full, 2.5e9), 2);
+  // budget is a hard ceiling, never exceeded
+  const n = warehouseLevelsToBuy(full, 5e9);
+  assert.ok(warehouseUpgradeCost(1, n) <= 5e9);
+  assert.ok(warehouseUpgradeCost(1, n + 1) > 5e9);
+  // degenerate inputs are safe
+  assert.equal(warehouseLevelsToBuy(null, 1e12), 0);
+  assert.equal(warehouseLevelsToBuy({ level: 1, size: 0, sizeUsed: 0 }, 1e12), 0);
+  assert.equal(warehouseLevelsToBuy(full, 0), 0);
+});
+
+test("officeTarget grows past the start size but stops at the cap", () => {
+  // the live bug: office frozen at 3 forever, so R&D never got a seat
+  assert.equal(officeTarget(3, 100e9), 6);
+  assert.equal(officeTarget(27, 100e9), 30);
+  assert.equal(officeTarget(30, 100e9), 30, "capped");
+  assert.equal(officeTarget(3, 1e6), 3, "no growth without budget");
 });
