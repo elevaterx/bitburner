@@ -93,26 +93,36 @@ test("bootstrapWeights only pays for what is still missing", () => {
   assert.equal(bootstrapWeights(null, 54000).karma, 1);
 });
 
-test("scoreCrime discounts by success chance -- which is why hardcoded Homicide is wrong early", () => {
-  // Homicide: big karma, but ~1% success at starting stats. Mug: small karma, ~50% success.
+test("scoreCrime pays karma and combat exp even on failure -- so Homicide wins at ANY chance", () => {
+  // CORRECTED TEST. It previously asserted the opposite ("at 1% success Homicide's karma is
+  // worthless") and passed, because both the test and scoreCrime encoded the same wrong model:
+  // that every reward is gated on success. CrimeWork.ts:68-84 says otherwise -- a failed crime
+  // pays karma/4 and exp*0.25; only money and kills are all-or-nothing.
   const homicide = { time: 3000, money: 45e3, karma: 3, kills: 1,
                      strength_exp: 2, defense_exp: 2, dexterity_exp: 2, agility_exp: 2 };
   const mug      = { time: 4000, money: 36e3, karma: 0.25, kills: 0,
                      strength_exp: 3, defense_exp: 3, dexterity_exp: 3, agility_exp: 3 };
   const karmaOnly = { money: 0, karma: 1, combat: 0, kills: 0 };
 
+  // 1% success: Homicide still yields 3*(0.01+0.99/4)/3s = 0.258 karma/s;
+  // Mug at 50% yields 0.25*(0.5+0.5/4)/4s = 0.039/s. Homicide by 6.6x.
   const early = pickCrime([
     { name: "Homicide", stats: homicide, chance: 0.01 },
     { name: "Mug",      stats: mug,      chance: 0.50 },
   ], karmaOnly);
-  assert.equal(early.name, "Mug", "at 1% success Homicide's karma is worthless");
+  assert.equal(early.name, "Homicide", "failed homicides still pay karma/4 -- 4x mug's best case");
+  assert.ok(Math.abs(scoreCrime(homicide, 0.01, karmaOnly) - 0.2575) < 1e-6);
+  assert.ok(Math.abs(scoreCrime(mug, 0.50, karmaOnly) - 0.0390625) < 1e-6);
 
-  // once combat is up, Homicide's chance rises and it takes over -- no ladder logic needed
-  const late = pickCrime([
-    { name: "Homicide", stats: homicide, chance: 0.90 },
-    { name: "Mug",      stats: mug,      chance: 1.00 },
-  ], karmaOnly);
-  assert.equal(late.name, "Homicide");
+  // Floor check: even at ZERO success chance homicide beats mug at full success.
+  assert.ok(scoreCrime(homicide, 0, karmaOnly) > scoreCrime(mug, 1, karmaOnly),
+            "homicide's c=0 floor of 0.25 karma/s exceeds mug's 0.0625/s ceiling");
+
+  // Money and kills ARE all-or-nothing, so they keep the full chance discount.
+  const moneyOnly = { money: 1, karma: 0, combat: 0, kills: 0 };
+  assert.equal(scoreCrime(homicide, 0, moneyOnly), 0, "no money from a failed crime");
+  const killsOnly = { money: 0, karma: 0, combat: 0, kills: 1 };
+  assert.equal(scoreCrime(homicide, 0, killsOnly), 0, "no kills from a failed crime");
 });
 
 test("scoreCrime follows the weights, not a fixed money objective", () => {

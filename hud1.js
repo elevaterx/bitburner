@@ -345,6 +345,12 @@ export async function main(ns) {
         // --- build status snapshot text for the [snapshot] button (held in scope for click handler) ---
         const ts = new Date().toISOString().slice(0, 19).replace("T", " ");
         const player = ns.getPlayer();
+        // Source files + node identity. getResetInfo is 1GB and needs NO SF4, unlike
+        // singularity.getOwnedSourceFiles. Without this line the snapshot cannot answer
+        // "do I have SF10 / SF4 / SF9" -- which changes strategy by an order of magnitude
+        // (e.g. sleeves turn a 19h karma grind into ~2h), so it is worth the gigabyte.
+        let resetInfo = null; try { resetInfo = ns.getResetInfo(); } catch (e) {}
+        let karma = 0; try { karma = ns.heart.break(); } catch (e) {}   // 0GB
         const cash = player.money;
         const lvl = ns.getHackingLevel();
         // hacking XP lives on the player object (exp.hacking in current API, skills fallback). Sample it
@@ -392,7 +398,25 @@ export async function main(ns) {
         const netPct = netMax > 0 ? Math.round(netUsed / netMax * 100) : 0;
         const lines = [];
         lines.push("=== bb-status @ " + ts + " ===");
+        if (resetInfo) {
+            const sfList = [...(resetInfo.ownedSF ? resetInfo.ownedSF.entries() : [])]
+                .sort((a, b) => a[0] - b[0]).map(([n, l]) => "SF" + n + "." + l).join(" ") || "none";
+            const augAge = resetInfo.lastAugReset ? (Date.now() - resetInfo.lastAugReset) / 1000 : 0;
+            const nodeAge = resetInfo.lastNodeReset ? (Date.now() - resetInfo.lastNodeReset) / 1000 : 0;
+            lines.push("BN" + resetInfo.currentNode + "  " + sfList +
+                       "   augs " + (resetInfo.ownedAugs ? resetInfo.ownedAugs.size : 0) +
+                       "  since install " + fmtAge(augAge) + "  since node " + fmtAge(nodeAge));
+        }
         lines.push("level " + lvl + "  cash $" + fmt(cash) + "  income $" + fmt(liveIncome) + "/s  share " + shareDisp + "  rooted " + rooted + "  contracts " + contracts);
+        {   // combat / karma line -- karma gates gang formation outside BN2 (-54,000), and combat
+            // drives Homicide success rate (chance = (2*str+2*def+0.5*dex+0.5*agi)/975, so all four
+            // at 195 = 100%). Neither was visible in the snapshot before.
+            const sk = player.skills || {};
+            lines.push("combat " + (sk.strength|0) + "/" + (sk.defense|0) + "/" + (sk.dexterity|0) + "/" + (sk.agility|0) +
+                       "  cha " + (sk.charisma|0) + "  karma " + Math.round(karma) +
+                       "  kills " + (player.numPeopleKilled || 0) +
+                       "  city " + player.city + "  factions " + ((player.factions || []).length));
+        }
         // XP/level rate line (only once we have a window). Helps gauge the grind to a daemon level gate.
         if (rateSamples.length >= 2 && rateSpanS >= 5) {
             lines.push("xp/s " + fmt(xpPerSec) + "  lvl/s " + (lvlPerSec >= 0 ? lvlPerSec.toFixed(2) : "0") +

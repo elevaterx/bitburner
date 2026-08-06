@@ -29,6 +29,7 @@
  *
  *  @param {NS} ns */
 import { applyLayout } from "winlayout.js";
+import { accessKarmaRequirement, bootstrapWeights, scoreCrime } from "./lib/gang-bootstrap.js";
 export async function main(ns) {
     // === CONFIG ===
     const ENABLE_INVITES   = true;
@@ -47,6 +48,17 @@ export async function main(ns) {
     // Only reachable below $500k, so it is a cold-start edge, not a normal-play one.
     const WORK_CTL = "sing-ctl.txt";
     const ENABLE_CRIME     = true;        // commit crime when cash < CASH_FLOOR
+    const ENABLE_KARMA     = true;        // grind karma when the gang access gate is unmet
+    // Gym target before switching to Homicide, derived rather than guessed. Homicide success is
+    // (2*str+2*def+0.5*dex+0.5*agi)/975, so all four at 195 = 100%. But gym exp cost is exponential
+    // in level (calculateSkill inverse), while the karma payoff is only linear in success chance.
+    // Minimising gym-hours + crime-hours over the target level:
+    //     gym to  15 (none)   8% chance  60.9 h total   <- pure homicide
+    //     gym to 100          51%        30.8 h
+    //     gym to 135          67%        28.2 h         <- optimum, and the curve is flat 120-160
+    //     gym to 195         100%        44.2 h         <- the last 60 levels cost 21 h to save 5 h
+    const GYM_TARGET = 135;
+    const GYM_LOCATION = "Powerhouse Gym";   // Sector-12, expMult 10 (the best), $2.4k/s
 
     const CASH_RESERVE = 1_000_000;   // never let cash drop below this from purchases
     const CASH_FLOOR   = 500_000;     // crime when cash below this; faction work above.
@@ -292,19 +304,85 @@ export async function main(ns) {
         // Crime in progress isn't restarted each loop (alreadyAt check). When cash crosses
         // back above CASH_FLOOR, next loop's workForFaction cancels any running crime and
         // starts work, costing the partial crime earnings -- acceptable for the simpler logic.
-        const doCrime = ENABLE_CRIME && cash < CASH_FLOOR && profile.crime;
+        // --- PHASE 4a: gang access karma gate ------------------------------------
+        // Outside BN2, canAccessGang requires karma <= -54,000 (PlayerObjectGangMethods.ts:22)
+        // BEFORE any faction will let you create a gang. Nothing in the stack was driving karma
+        // down: gang.js has no singularity calls at all (by design), and the crime phase below
+        // only fires when cash < CASH_FLOOR, which never happens once the trader is running. The
+        // objective was fully modelled in lib/gang-bootstrap.js and completely unreachable.
+        //
+        // No ns.gang call is needed to know whether we are done. Karma is monotonically
+        // decreasing -- nothing in the game raises it -- so once the gate is cleared the
+        // shortfall stays 0 forever, and in BN2 accessKarmaRequirement returns 0 so a player
+        // with any negative karma is excluded automatically.
+        let karmaGrind = false, karmaShortfall = 0, karmaNow = 0;
+        if (ENABLE_KARMA && profile.crime) {
+            try {
+                const reset = ns.getResetInfo();                       // 1GB, no SF4 needed
+                const haveSF2 = reset.ownedSF && (Number(reset.ownedSF.get(2)) || 0) > 0;
+                if (haveSF2 || reset.currentNode === 2) {
+                    karmaNow = ns.heart.break();                       // 0GB
+                    karmaShortfall = Math.max(0, karmaNow - accessKarmaRequirement(reset.currentNode));
+                    karmaGrind = karmaShortfall > 0;
+                }
+            } catch (e) {}
+        }
+
+        // --- PHASE 4b: gym before grinding, while the grind is still cheap to accelerate ---
+        // Only while the karma gate is the binding constraint. Trains the LOWEST combat stat,
+        // because Homicide's chance formula reads all four and the weakest one drags the sum.
+        let gymming = false;
+        if (karmaGrind) {
+            try {
+                const sk = ns.getPlayer().skills || {};
+                const quad = [["strength", "str"], ["defense", "def"],
+                              ["dexterity", "dex"], ["agility", "agi"]]
+                    .map(([k, a]) => ({ k, a, v: Number(sk[k]) || 0 }))
+                    .sort((x, y) => x.v - y.v);
+                if (quad[0].v < GYM_TARGET) {
+                    gymming = true;
+                    let atGym = false;
+                    try {
+                        const cur = ns.singularity.getCurrentWork();
+                        atGym = !!cur && (cur.type === "CLASS" || cur.type === "Class")
+                                && (cur.classType || "").toLowerCase().includes(quad[0].a);
+                    } catch (e) {}
+                    if (!atGym) {
+                        const ok = ns.singularity.gymWorkout(GYM_LOCATION, quad[0].a, FOCUS);
+                        log("  gym: " + quad[0].k + " " + quad[0].v + "/" + GYM_TARGET
+                            + (ok ? "" : "  [gymWorkout REFUSED -- wrong city? travel to Sector-12]"));
+                    } else {
+                        log("  gym: " + quad[0].k + " " + quad[0].v + "/" + GYM_TARGET + " (training)");
+                    }
+                }
+            } catch (e) { log("  [gym phase error] " + e); }
+        }
+
+        // Karma takes precedence over the cash floor: the grind is ~28 h of wall clock even
+        // optimally, so it must run continuously rather than only in the cold-start window when
+        // cash happens to be low. Gym outranks crime while the gym target is unmet.
+        const doCrime = !gymming && profile.crime && (karmaGrind || (ENABLE_CRIME && cash < CASH_FLOOR));
+        const crimeWeights = karmaGrind
+            ? bootstrapWeights(null, karmaShortfall)          // { money:0, karma:1, combat:0, kills:0 }
+            : { money: 1, karma: 0, combat: 0, kills: 0 };
         if (doCrime) {
             try {
-                // pick the crime with the highest EV/sec at current stats
+                // Rank by the weighted objective, not a hardcoded money EV. scoreCrime discounts
+                // each objective by the chance that actually applies to it -- money and kills are
+                // all-or-nothing, karma and combat exp are only quartered on failure -- which is
+                // why Homicide is the karma pick at every combat level, not just once stats are up.
                 let best = null;
                 for (const c of CRIMES) {
                     try {
                         const stats  = ns.singularity.getCrimeStats(c);
                         const chance = ns.singularity.getCrimeChance(c);
                         const seconds = (stats.time || 1) / 1000;
-                        const evPerSec = (chance * (stats.money || 0)) / seconds;
+                        const evPerSec = karmaGrind
+                            ? scoreCrime(stats, chance, crimeWeights)
+                            : (chance * (stats.money || 0)) / seconds;
                         if (!best || evPerSec > best.evPerSec) {
-                            best = { name: c, evPerSec, chance, money: stats.money || 0, time: stats.time || 0 };
+                            best = { name: c, evPerSec, chance, money: stats.money || 0, time: stats.time || 0,
+                                     karmaPerSec: Math.abs(stats.karma || 0) * (chance + (1 - chance) / 4) / seconds };
                         }
                     } catch (e) {}   // crime name not recognized in this fork -- skip silently
                 }
@@ -320,16 +398,31 @@ export async function main(ns) {
                         const matches = isCrime && (cur.crimeType === best.name || cur.crime === best.name);
                         if (matches) alreadyAt = true;
                     } catch (e) {}
+                    // karma mode reports the karma rate and an ETA -- "$/s ev" is meaningless
+                    // when the objective is not money, and the ETA is the number that decides
+                    // whether the gang is worth waiting for at all.
+                    const kEta = (karmaGrind && best.karmaPerSec > 0)
+                        ? "  eta " + (karmaShortfall / best.karmaPerSec / 3600).toFixed(1) + "h"
+                        : "";
+                    const desc = karmaGrind
+                        ? best.name + "  " + (best.chance * 100).toFixed(0) + "%  "
+                          + best.karmaPerSec.toFixed(2) + " karma/s  " + Math.round(karmaNow)
+                          + " -> " + Math.round(karmaNow - karmaShortfall) + kEta
+                        : best.name + "  " + (best.chance * 100).toFixed(0) + "% \u00d7 $" + fmt(best.money)
+                          + " = $" + fmt(best.evPerSec) + "/s ev";
                     if (!alreadyAt) {
                         ns.singularity.commitCrime(best.name, FOCUS);
-                        log("  crime start: " + best.name + "  "
-                            + (best.chance * 100).toFixed(0) + "% \u00d7 $" + fmt(best.money)
-                            + " = $" + fmt(best.evPerSec) + "/s ev");
+                        log("  crime start" + (karmaGrind ? " [KARMA GATE]" : "") + ": " + desc);
                     } else {
-                        log("  crime: " + best.name + " (running, ev $" + fmt(best.evPerSec) + "/s)");
+                        log("  crime" + (karmaGrind ? " [KARMA GATE]" : "") + ": " + desc + " (running)");
                     }
                 }
             } catch (e) { log("  [crime phase error] " + e); }
+        } else if (gymming) {
+            // Deliberate no-op branch. Without it the chain falls through to the faction-work
+            // phases below, whose workForFaction() would cancel the gym session we just started
+            // -- every loop, forever, so combat would never rise and the karma ETA would silently
+            // stay at its 60 h worst case. The gym IS this loop's action; do nothing else.
         } else if (ENABLE_WORK && profile.work && workOff) {
             // PASSIVE by design. This is the "I'll pick my own faction work, stop overriding me"
             // switch, so it must NOT call stopAction() -- that would cancel the work you just set by
