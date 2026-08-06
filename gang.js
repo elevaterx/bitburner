@@ -37,6 +37,7 @@ export async function main(ns) {
     ["ascend-max", DEFAULT_GANG_CFG.ascendMaxPerTick],
     ["ascend-floor", DEFAULT_GANG_CFG.ascendPenaltyFloor],
     ["no-warfare", false],
+    ["objective", DEFAULT_GANG_CFG.objective],
     ["quiet", false],
   ]);
   const cfg = {
@@ -45,6 +46,7 @@ export async function main(ns) {
     ascendThreshold: Number(flags.ascend),
     ascendMaxPerTick: Number(flags["ascend-max"]),
     ascendPenaltyFloor: Number(flags["ascend-floor"]),
+    objective: String(flags["objective"]),
   };
   const log = (m) => ns.tprint("[gang] " + m);
   const vlog = (m) => { if (!flags.quiet) ns.print("[gang] " + m); };
@@ -150,7 +152,12 @@ function manageGang(ns, cfg, flags, vlog) {
   const isHacking = gang.isHacking;
   const members = g.getMemberNames();
   const taskNames = selectTaskNames(g.getTaskNames().map((n) => g.getTaskStats(n)), isHacking);
-  const objective = gangObjective(gang, members.length, cfg);
+  // Non-gang income decides whether gang MONEY is worth a task slot at all. getTotalScriptIncome
+  // is the trader/corp/hacking economy; if that already dwarfs what 12 members can earn, respect
+  // (-> gang-faction rep -> aug access) is strictly the better currency.
+  let otherIncomeRate = 0;
+  try { otherIncomeRate = ns.getTotalScriptIncome()[0] || 0; } catch (e) {}
+  const objective = gangObjective(gang, members.length, cfg, { otherIncomeRate });
 
   // One read per member, reused below. getMemberInformation is already paid for RAM-wise.
   const infos = new Map();

@@ -25,9 +25,32 @@ test("selectTaskNames: data-driven, type-filtered", () => {
   assert.equal(t.train, "Train Combat");
 });
 
-test("gangObjective: respect until full, then money", () => {
+test("gangObjective: respect until full, then money ONLY when gang money is material", () => {
+  // Below the cap respect is forced: recruiting costs 5^(members-3+1) respect (Gang.ts:316-323),
+  // so a money task there stalls the roster.
   assert.equal(gangObjective({}, 5), "respect");
+  assert.equal(gangObjective({}, 5, DEFAULT_GANG_CFG, { otherIncomeRate: 1e12 }), "respect");
+
+  // At the cap with NO context, behaviour is unchanged from the original rule.
   assert.equal(gangObjective({}, 12), "money");
+
+  // At the cap, if the rest of the economy already out-earns anything 12 members can add, respect
+  // is the better currency -- it is the only route to gang-faction rep, and a gang faction sells
+  // almost every augmentation in the game (FactionHelpers.tsx:172-176).
+  assert.equal(gangObjective({}, 12, DEFAULT_GANG_CFG, { otherIncomeRate: 3.7e8 }), "respect",
+               "the live case: $367m/s of trader income makes gang money a rounding error");
+  assert.equal(gangObjective({}, 12, DEFAULT_GANG_CFG, { otherIncomeRate: 1e5 }), "money",
+               "a poor node still wants the cash");
+
+  // explicit override wins over everything, in both directions and at any roster size
+  const forceMoney = { ...DEFAULT_GANG_CFG, objective: "money" };
+  const forceResp  = { ...DEFAULT_GANG_CFG, objective: "respect" };
+  assert.equal(gangObjective({}, 3, forceMoney), "money", "override beats the recruit floor");
+  assert.equal(gangObjective({}, 12, forceResp, { otherIncomeRate: 0 }), "respect");
+
+  // degenerate context must not throw or silently flip
+  assert.equal(gangObjective({}, 12, DEFAULT_GANG_CFG, { otherIncomeRate: NaN }), "money");
+  assert.equal(gangObjective({}, 12, DEFAULT_GANG_CFG, {}), "money");
 });
 
 test("needsWantedControl: only with real wanted and low penalty", () => {

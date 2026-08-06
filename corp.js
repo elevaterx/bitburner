@@ -183,7 +183,8 @@ function emitCorpData(ns, c, info, cfg, safe) {
       funds: info.funds, revenue: info.revenue, expenses: info.expenses,
       valuation: info.valuation, sharePrice: info.sharePrice,
       numShares: info.numShares, totalShares: info.totalShares,
-      dividendRate: info.dividendRate, investorRound: safe(() => c.getInvestmentOffer().round) || null,
+      dividendRate: info.dividendRate, dividendEarnings: info.dividendEarnings,
+      investorRound: safe(() => c.getInvestmentOffer().round) || null,
       divisions, nextGate,
     }), "w");
   } catch (e) { /* diagnostics must never break the manager */ }

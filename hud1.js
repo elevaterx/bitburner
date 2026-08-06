@@ -660,8 +660,16 @@ export async function main(ns) {
                 + "   profit $" + fmt(profit) + "/s" + (profit <= 0 ? "  <-- BURNING FUNDS" : ""));
             if (cRead.public) {
                 lines.push("  shares " + fmt(cRead.numShares) + "/" + fmt(cRead.totalShares)
-                    + "  price $" + fmt(cRead.sharePrice) + "  dividend " + ((cRead.dividendRate || 0) * 100).toFixed(1) + "%");
+                    + "  price $" + fmt(cRead.sharePrice));
             }
+            // Dividends are NOT gated on going public -- issueDividends (Actions.ts:137-143) has no
+            // public check, and while private you own 100% of shares so the whole payout lands in
+            // your personal money. Rendering this only for public corps hid a live lever behind a
+            // condition that does not exist in the game.
+            lines.push("  dividend rate " + ((cRead.dividendRate || 0) * 100).toFixed(1) + "%"
+                + (cRead.dividendRate > 0
+                    ? "   paying you $" + fmt(cRead.dividendEarnings || 0) + "/cycle"
+                    : "   (OFF -- profit all retained; issueDividends() works while private too)"));
             for (const d of cRead.divisions) {
                 const dp = (d.revenue || 0) - (d.expenses || 0);
                 lines.push("  " + d.name + " (" + d.industry + ")  profit $" + fmt(dp) + "/s"
