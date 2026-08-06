@@ -96,8 +96,13 @@ test("warehouseLevelsToBuy: only when constrained, and never over budget", () =>
   const half = { level: 1, size: 160, sizeUsed: 80 };
   // half-empty warehouse gains nothing from more shelves, however rich we are
   assert.equal(warehouseLevelsToBuy(half, 1e12), 0);
-  // the live case: all six pegged at 100% with $4.82b funds, 35% budget over 6 cities = $281m
-  assert.equal(warehouseLevelsToBuy(full, 281e6), 0, "one level costs $1.14b -- cannot afford yet");
+  // REGRESSION. This test previously asserted that a $281m budget correctly buys nothing -- true
+  // in isolation, but $281m was funds*0.35/6, i.e. the budget corp.js actually handed it. So the
+  // test blessed the exact arithmetic that made the feature inert: with six cities sharing the
+  // budget, no warehouse could be upgraded until funds hit $19.6b. The budget is no longer divided.
+  assert.equal(warehouseLevelsToBuy(full, 281e6), 0, "$281m genuinely cannot buy a $1.14b level");
+  assert.equal(warehouseLevelsToBuy(full, 4.82e9 * 0.35), 1,
+               "the UNDIVIDED budget at the live $4.82b funds must buy exactly one level");
   assert.equal(warehouseLevelsToBuy(full, 1.15e9), 1);
   assert.equal(warehouseLevelsToBuy(full, 2.5e9), 2);
   // budget is a hard ceiling, never exceeded

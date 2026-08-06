@@ -201,7 +201,13 @@ function ensureCity(ns, cfg, division, city, outputs, officeSize, safe, vlog) {
   // nothing errors. Budget is split across cities so one city cannot eat the whole treasury.
   try {
     const wh = c.getWarehouse(div, city);
-    const budget = (c.getCorporation().funds * cfg.warehouseBudgetFrac) / CORP_CITIES.length;
+    // NOT divided across cities. Dividing evenly (what I shipped an hour ago) meant each city got
+    // funds*0.35/6 -- $281m at $4.82b funds, against $1.14b for a single L1->L2 upgrade. The gate
+    // could not fire until funds reached $19.6b, so the "fix" was inert in exactly the situation it
+    // was written for. ensureCity runs per city in sequence and funds drop after each purchase, so
+    // giving each call the FULL budget upgrades one city per pass and rotates naturally as the
+    // treasury recovers. One unblocked warehouse raises revenue, which funds the next.
+    const budget = c.getCorporation().funds * cfg.warehouseBudgetFrac;
     const levels = warehouseLevelsToBuy(wh, budget, cfg);
     if (levels > 0) {
       c.upgradeWarehouse(div, city, levels);
