@@ -15,7 +15,7 @@ import { money as fmtMoney } from "./lib/fmt.js";
 import {
   CORP_CITIES, UPGRADE_PRIORITY, DEFAULT_CORP_CFG,
   distributeJobs, shouldAcceptOffer, upgradesToLevel,
-  warehouseLevelsToBuy, warehouseUpgradeCost, officeTarget,
+  warehouseLevelsToBuy, warehouseUpgradeCost, officeTarget, warehouseStalled,
   PRODUCT_INDUSTRY, PRODUCT_DIVISION, PRODUCT_HQ, RESEARCH_PRIORITY, planProduct,
 } from "./lib/corp-logic.js";
 
@@ -74,7 +74,20 @@ function ensureAll(ns, cfg, flags, vlog, safe) {
   ensureDivision(ns, AGRI, AGRI, vlog);
   ensureUnlock(ns, "Smart Supply", vlog);
   const agri = safe(() => c.getDivision(AGRI));
-  if (agri) for (const city of CORP_CITIES) ensureCity(ns, cfg, agri, city, AGRI_OUTPUTS, cfg.officeStartSize, safe, vlog);
+  // PRIORITY INVERSION FIX. Warehouses are upstream of everything: while one is full, production is
+  // capped and every other purchase buys capacity that cannot be used. Detect the stall FIRST, then
+  // give warehouses the large budget and stand the other spenders down until it clears.
+  let stalled = false;
+  if (agri) {
+    const cities = CORP_CITIES.map((city) => {
+      const w = safe(() => c.getWarehouse(AGRI, city));
+      return w ? { whUsed: w.sizeUsed, whSize: w.size } : null;
+    }).filter(Boolean);
+    stalled = warehouseStalled(cities, cfg);
+  }
+  const passCfg = stalled ? { ...cfg, warehouseBudgetFrac: cfg.warehouseStallBudgetFrac } : cfg;
+  if (stalled) vlog("WAREHOUSE STALL -- warehouses take priority; office growth and upgrades paused");
+  if (agri) for (const city of CORP_CITIES) ensureCity(ns, passCfg, agri, city, AGRI_OUTPUTS, cfg.officeStartSize, safe, vlog, stalled);
 
   // --- Tobacco product engine (v2) ---
   if (!flags["no-products"]) {
@@ -92,8 +105,9 @@ function ensureAll(ns, cfg, flags, vlog, safe) {
     }
   }
 
-  ensureUpgrades(ns, cfg, vlog, safe);
-  ensureAdVert(ns, cfg, AGRI, vlog, safe);
+  // Both are downstream of warehouse capacity -- skip while jammed so the treasury can reach the
+  // $1.14b an upgrade costs instead of being nibbled away every pass.
+  if (!stalled) { ensureUpgrades(ns, cfg, vlog, safe); ensureAdVert(ns, cfg, AGRI, vlog, safe); }
   ensureInvestment(ns, cfg, vlog, safe);
 
   const info = c.getCorporation();
@@ -186,7 +200,7 @@ function ensureUnlock(ns, name, vlog) {
   } catch (e) {}
 }
 
-function ensureCity(ns, cfg, division, city, outputs, officeSize, safe, vlog) {
+function ensureCity(ns, cfg, division, city, outputs, officeSize, safe, vlog, stalled) {
   const c = ns.corporation;
   const div = division.name;
   try {
@@ -221,7 +235,10 @@ function ensureCity(ns, cfg, division, city, outputs, officeSize, safe, vlog) {
     // Grow past the START size. The old code compared against the static officeStartSize, so
     // offices were frozen at 3 seats forever -- and distributeJobs(3) across five roles leaves
     // Research & Development at 0, which is why researchPoints never moved off zero.
-    const want = Math.max(officeSize, officeTarget(office.size, c.getCorporation().funds, cfg));
+    // No office GROWTH while warehouses are jammed -- more seats produce more of what already has
+    // nowhere to go. Hiring into existing seats below continues, since empty seats are pure waste.
+    const want = stalled ? Math.max(officeSize, office.size)
+                         : Math.max(officeSize, officeTarget(office.size, c.getCorporation().funds, cfg));
     if (office.size < want) c.upgradeOfficeSize(div, city, want - office.size);
     const size = c.getOffice(div, city).size;
     while (c.getOffice(div, city).numEmployees < size) { if (!c.hireEmployee(div, city)) break; }

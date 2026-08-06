@@ -4,7 +4,7 @@ import {
   distributeJobs, shouldAcceptOffer, upgradesToLevel, amountToReach,
   CORP_CITIES, DEFAULT_CORP_CFG,
   nextProductName, lowestRated, planProduct,
-  warehouseUpgradeCost, warehouseLevelsToBuy, officeTarget,
+  warehouseUpgradeCost, warehouseLevelsToBuy, officeTarget, warehouseStalled,
 } from "../lib/corp-logic.js";
 
 test("distributeJobs: sums exactly to size, non-negative", () => {
@@ -121,4 +121,24 @@ test("officeTarget grows past the start size but stops at the cap", () => {
   assert.equal(officeTarget(27, 100e9), 30);
   assert.equal(officeTarget(30, 100e9), 30, "capped");
   assert.equal(officeTarget(3, 1e6), 3, "no growth without budget");
+});
+
+test("warehouseStalled: one full city is enough to hold the whole division back", () => {
+  const full = { whUsed: 159, whSize: 160 }, roomy = { whUsed: 40, whSize: 160 };
+  assert.equal(warehouseStalled([roomy, roomy, full]), true, "any one at the trigger stalls the pass");
+  assert.equal(warehouseStalled([roomy, roomy, roomy]), false);
+  // the exact live reading: 158-159 of 160 across all six
+  assert.equal(warehouseStalled([{ whUsed: 158, whSize: 160 }]), true);
+  assert.equal(warehouseStalled([]), false);
+  assert.equal(warehouseStalled(null), false);
+  assert.equal(warehouseStalled([{ whUsed: 0, whSize: 0 }]), false, "no warehouse is not a stall");
+});
+
+test("stall budget clears an upgrade at funds the normal budget cannot", () => {
+  const full = { level: 1, size: 160, sizeUsed: 159 };
+  const funds = 1.5e9;   // roughly where the corp sits after a few hours of $56k/s
+  assert.equal(warehouseLevelsToBuy(full, funds * DEFAULT_CORP_CFG.warehouseBudgetFrac), 0,
+               "normal 35% budget still cannot reach $1.14b -- this is the jam");
+  assert.equal(warehouseLevelsToBuy(full, funds * DEFAULT_CORP_CFG.warehouseStallBudgetFrac), 1,
+               "stall 80% budget breaks the jam");
 });
