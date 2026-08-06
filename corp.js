@@ -47,7 +47,7 @@ export async function main(ns) {
   const caps = getCapabilities(ns);
   if (!caps.corporation) { log("Corporation API unavailable (need BN3 or SF-3). Exiting."); return; }
 
-  let blocked = false;
+  let blocked = false, passError = null;
   while (true) {
     if (!ns.corporation.hasCorporation()) {
       if (!ns.corporation.createCorporation(cfg.corpName, !flags["no-selffund"])) {
@@ -60,7 +60,20 @@ export async function main(ns) {
       log("created corporation '" + cfg.corpName + "'.");
     }
 
-    ensureAll(ns, cfg, flags, vlog, safe);
+    // A long-running manager must not die on one bad pass. ensureAll was called bare, so a single
+    // throw anywhere inside it killed corp.js outright -- which is exactly what happened at 15:01
+    // after the stall-priority change went in: one pass completed and wrote status, the next threw,
+    // and the process vanished with no trace beyond a status file that stopped updating.
+    // The error also goes into the STATUS LINE, not just the tail, so it reaches the snapshot --
+    // a dead module that says why beats one that just stops.
+    try {
+      ensureAll(ns, cfg, flags, vlog, safe);
+      passError = null;
+    } catch (e) {
+      passError = String(e && e.message ? e.message : e).slice(0, 140);
+      log("pass FAILED: " + passError);
+      try { writeStatus(ns, "corp", { line: "PASS FAILED -- " + passError }); } catch (e2) {}
+    }
 
     if (flags.once) return;
     try { await ns.corporation.nextUpdate(); } catch (e) { await ns.sleep(2000); }
