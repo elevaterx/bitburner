@@ -1,14 +1,14 @@
-=== bb-status @ 2026-08-06 14:42:51 ===
+=== bb-status @ 2026-08-06 14:43:00 ===
 BN3  SF1.3 SF2.1 SF4.3 SF5.3 SF8.1 SF9.1   augs 0  since install 13.8h  since node 13.8h
-level 396  cash $65.31b  income $120.99m/s  share off  rooted 49  contracts 0
-combat 221/221/226/224  cha 15  karma -35978  kills 12229  city Aevum  factions 5
-xp/s 0  lvl/s 0.00  (avg over 60s)
+level 396  cash $65.31b  income $120.83m/s  share off  rooted 49  contracts 0
+combat 221/221/226/224  cha 15  karma -35985  kills 12232  city Aevum  factions 5
+xp/s 0  lvl/s 0.00  (avg over 59s)
 
 STOCKS
   trader     running   mode 4S long+short
-  net worth  $1.34t   (cash $65.31b + market $1.27t)
-  positions  8L / 0S   top FLCM $302.54b
-  net worth/s $64.15m  (avg over 60s)
+  net worth  $1.34t   (cash $65.31b + market $1.28t)
+  positions  8L / 0S   top FLCM $305.00b
+  net worth/s $136.16m  (avg over 59s)
 
 RAM
   home    800GB / 4.10TB   20%
@@ -17,7 +17,7 @@ RAM
 
 THREADS
   deployed 0  batch 0  idle 1442  total 1442
-  harvest income $0/s   batch income $120.99m/s
+  harvest income $0/s   batch income $120.83m/s
 
 RAM BY SCRIPT
   corp.js                   1 threads       564GB
@@ -38,20 +38,20 @@ BATCH (0 servers)
 CONTROLLERS
   (none)
 
-(hud2 data is stale by 132154s -- hud2 not running)
+(hud2 data is stale by 132163s -- hud2 not running)
 
 GANG: (gang-data.txt is from a PREVIOUS BitNode -- ignore. gang.js has not written since this node began; there is no gang yet.)
 
-CORP  Bitrunner Industries  private  valuation $29.86b  round 1
-  funds $511.48m   rev $96.3k/s   exp $46.8k/s   profit $49.5k/s
-  Agriculture (Agriculture)  profit $49.5k/s  prodMult 6.00  research 44  adverts 0
+CORP  Bitrunner Industries  private  valuation $29.93b  round 1
+  funds $512.00m   rev $96.0k/s   exp $44.4k/s   profit $51.6k/s
+  Agriculture (Agriculture)  profit $51.6k/s  prodMult 6.00  research 44  adverts 0
     Sector-12   wh 158/160 (99%)   office 6/6   <-- WAREHOUSE FULL
     Aevum       wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
-    Chongqing   wh 159/160 (99%)   office 3/3   <-- WAREHOUSE FULL
-    New Tokyo   wh 159/160 (99%)   office 3/3   <-- WAREHOUSE FULL
+    Chongqing   wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
+    New Tokyo   wh 159/160 (100%)   office 3/3   <-- WAREHOUSE FULL
     Ishima      wh 159/160 (99%)   office 3/3   <-- WAREHOUSE FULL
     Volhaven    wh 159/160 (99%)   office 3/3   <-- WAREHOUSE FULL
-  saving for Tobacco (Tobacco): $511.48m / $20.00b  (3%)  eta 4.6d
+  saving for Tobacco (Tobacco): $512.00m / $20.00b  (3%)  eta 4.4d
 
 AUGSTAT (captured 27m ago)
   === augstat ===  joined: The Black Hand, NiteSec, The Syndicate, Slum Snakes, CyberSec
@@ -131,11 +131,11 @@ AUGSTAT (captured 27m ago)
   note: each aug you QUEUE multiplies the next one's money price by 1.9x. Buy most-expensive
         first (augbuy.js does), and never pad a round with cheap augs you don't need.
 
-COORD HEALTH: stale by 97853s (coord stopped?)
+COORD HEALTH: stale by 97862s (coord stopped?)
 
 MODULES (BN3, auto):
   [on] Gang        forming - karma/faction  39.2GB
-  [on] Corporation $511.48m  rev $96.32k/s  profit $49.5k/s  div 1  563.9GB
+  [on] Corporation $512m  rev $96.02k/s  profit $51.58k/s  div 1  563.9GB
   [on] IPvGO       playing Slum Snakes  118-3 (streak 84)  1500it  18.9GB
 WORKERS:
   Coordinator stopped 
