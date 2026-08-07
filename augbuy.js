@@ -40,6 +40,9 @@
  *                augbuy still does NOT read ns.stock itself: every ns.stock symbol in the source
  *                costs static RAM whether it runs or not, and this must start without TIX access.
  *                Liquidate (panel: Trader 'SELL ALL') before committing a plan above your cash.
+ *    --dump      write status/augbuy-board.json -- the full candidate board, weights, budget and
+ *                NFG state, so tools/augbuy-replay.mjs can re-run the SAME planRound() offline
+ *                against real game state. Use this before asking for a change to the selection.
  *    --rep-horizon H   how many hours of your existing rep income make a faction_rep multiplier
  *                worth buying (default 4). With a gang running, respect converts to faction rep for
  *                free, so faction_rep augs are usually worthless -- this is the knob that says how
@@ -51,6 +54,7 @@
  *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
 import { augValue, selectRound, roundCost, orderedCost, orderWithPrereqs, roundEconomics,
          nodeWeights, gangRepPerSec, maxRepGap, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
+import { planRound, nfgLadder as ladderOf, roundScore, dropImproves } from "./lib/aug-round.js";
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -58,6 +62,7 @@ export async function main(ns) {
     const DONATE = ns.args.includes("donate");
     const ALL    = ns.args.includes("all");
     const NO_NFG = ns.args.includes("nonfg");
+    const DUMP   = ns.args.includes("--dump") || ns.args.includes("dump");
     const rIdx   = ns.args.indexOf("--nfg-reserve");
     const NFG_RESERVE = rIdx >= 0 && Number(ns.args[rIdx + 1]) > 0 ? Number(ns.args[rIdx + 1]) : 0;
     const WHY    = ns.args.includes("--why") || ns.args.includes("why");
@@ -188,22 +193,8 @@ export async function main(ns) {
     try { nfgValue = augValue(S.getAugmentationStats(NFG_NAME), WEIGHTS); } catch (e) {}
     let nfgPrice0 = 0;
     try { nfgPrice0 = S.getAugmentationPrice(NFG_NAME); } catch (e) {}
-    // How many NFG levels `cash` buys once `queued` augs are standing, and the price of the first
-    // level it does NOT buy -- which is what a marginal aug displaces.
-    const nfgLadder = (queued, cash) => {
-        if (!(nfgValue > 0) || !(nfgPrice0 > 0)) return { levels: 0, marginal: Infinity };
-        let price = nfgPrice0 * Math.pow(1.9, Math.max(0, queued)), left = Math.max(0, cash), n = 0;
-        while (n < 200 && left >= price) { left -= price; price *= 1.14 * 1.9; n++; }
-        return { levels: n, marginal: price / nfgValue };
-    };
+    const NFG = nfgValue > 0 && nfgPrice0 > 0 ? { price0: nfgPrice0, valuePerLevel: nfgValue } : null;
 
-    // SELECTION vs ORDERING -- two decisions, two keys. See lib/aug-plan.js.
-    //   ordering:  base cost DESCENDING is cheapest for a fixed basket (rearrangement inequality),
-    //              because purchase i costs base_i * 1.9^i.
-    //   selection: must be VALUE PER DOLLAR. Selecting by cost buys the dearest augs on the board,
-    //              which is how a $7.21b round bought PCMatrix ($2b for faction_rep 1.08) while
-    //              skipping S.N.A ($30m for 1.15).
-    // selectRound does both: greedy on density, returned in purchase order.
     // LIVE QUEUE ESCALATION. getAugmentationPrice reflects the 1.9^queued multiplier
     // (AugmentationHelpers.ts:157); getAugmentationBasePrice does not. Their RATIO is therefore the
     // current multiplier -- exact, needs no counting, and immune to the NFG quirk where each
@@ -239,53 +230,21 @@ export async function main(ns) {
     if (Number.isFinite(BUDGET_ARG) && BUDGET_ARG > 0) { budget = BUDGET_ARG; budgetSrc = "--budget"; }
     else if (netWorth !== null && netWorth > money0) { budget = netWorth; budgetSrc = "net worth (trader-data.txt, " + tAge + "s old)"; }
     else { budget = money0; budgetSrc = netWorth !== null ? "cash (= net worth)" : "cash -- no fresh trader-data.txt; run trader.js or pass --budget"; }
+
     const affordableByRep = buyable.filter(c => c._rep >= c.repReq);
-    // The donate path can manufacture rep, so it can't be pre-selected against a rep filter --
-    // fall back to the whole buyable set, ordered cheapest-for-the-basket.
-    let selThreshold = null;      // $/value of the marginal NFG level, once known -- for the report
+    const nfgLadder = (queued, cash) => ladderOf(nfgPrice0, nfgValue, queued, cash);
+
+    const selBase = { valueCutoff: CUTOFF, priceScale: queueMult, held: installed };
+    // An explicit --cutoff is the user overriding policy; honour it and skip the search. With the NFG
+    // tail off, money is NOT being spent to zero, so preserving it for the next round is a real
+    // option and the relative cutoff is the only rule that expresses that.
+    const plan = DONATE ? null
+        : planRound(affordableByRep, budget, (NO_NFG || cIdx >= 0) ? selBase : { ...selBase, nfg: NFG });
+    let selThreshold = plan ? plan.threshold : null;
     const list = DONATE
         ? buyable.sort((a, b) => (b.base - a.base) || (a.repReq - b.repReq))
-        : (() => {
-            const base = { valueCutoff: CUTOFF, priceScale: queueMult, held: installed };
-            // An explicit --cutoff is the user overriding policy; honour it and skip the anchoring.
-            // With the NFG tail off, money is NOT being spent to zero, so preserving it for the next
-            // round is a real option and the relative cutoff is the right (only) rule available.
-            if (NO_NFG || cIdx >= 0) return selectRound(affordableByRep, budget, base);
-            // THE THRESHOLD IS A FIXED POINT, AND ONE ITERATION DOES NOT REACH IT. The NFG ladder
-            // starts at 1.9^(augs queued), so a smaller basket leaves more cash AND a shallower
-            // exponent, which pushes the marginal level far up the ladder and inflates the threshold.
-            // Live: a single pass reported $743.41t per unit value where the settled answer was
-            // ~$137t -- 5x off, permissive enough to prune nothing.
-            //
-            // Rather than chase convergence (the map can oscillate between two basket sizes), iterate
-            // a few times and SCORE each candidate basket on the objective that actually matters:
-            //     round value = sum of aug values + (NFG levels the leftover buys) x value per level
-            // That is the real quantity being maximised -- augs and NFG competing for one pot of money
-            // that the install is about to destroy -- so picking the best iterate is not a heuristic
-            // tie-break, it is evaluating the thing directly. The relative-cutoff basket is included
-            // as a candidate too, so this can never do worse than the old rule.
-            const score = (sel) => {
-                const left = budget - orderedCost(sel) * queueMult;
-                const lad = nfgLadder(sel.length, left);
-                return sel.reduce((a, c) => a + (Number(c.value) || 0), 0) + lad.levels * nfgValue;
-            };
-            let cur = selectRound(affordableByRep, budget, base);
-            let best = { sel: cur, score: score(cur), rate: null };
-            for (let it = 0; it < 6; it++) {
-                const rate = nfgLadder(cur.length, budget - orderedCost(cur) * queueMult).marginal;
-                if (!(rate > 0) || !Number.isFinite(rate)) break;
-                // selectRound prices bases UNSCALED, so the threshold comes back to that basis.
-                const next = selectRound(affordableByRep, budget, { ...base, altPricePerValue: rate / queueMult });
-                const sc = score(next);
-                if (sc > best.score) best = { sel: next, score: sc, rate };
-                if (next.length === cur.length) break;      // settled
-                cur = next;
-            }
-            selThreshold = best.rate;
-            return best.sel;
-        })();
-    // orderedCost, not roundCost: precedence can force a cheap prereq into an early slot, so the
-    // basket's real price depends on the order selectRound returned and must not be re-sorted.
+        : plan.list;
+
     const planCost = DONATE ? null : orderedCost(list) * queueMult;
     // THE OPERATIVE NUMBER IS THE SETTLED ONE. `selThreshold` is the value that was fed to the
     // search that happened to produce the winning basket -- an input, not a property of the result.
@@ -382,6 +341,49 @@ export async function main(ns) {
         }
     }
 
+    // ---- BOARD DUMP ----
+    // Everything the round decision consumes, written where rfa-sync can pull it to disk. augbuy's
+    // defects have only ever been caught by running it in-game and reading the numbers; that costs a
+    // round trip per fix, and four fixes in a row went that way. With the board on disk,
+    // tools/augbuy-replay.mjs runs the SAME planRound() offline against real state, so the next
+    // change is verified before it ships rather than after.
+    if (DUMP) {
+        try {
+            const pl = ns.getPlayer();
+            ns.write("status/augbuy-board.json", JSON.stringify({
+                ts: Date.now(),
+                bitNode: (resetInfo && resetInfo.currentNode) || null,
+                budget, money0, netWorth, queueMult, cutoff: CUTOFF,
+                flags: { NO_NFG, DONATE, ALL, repHorizon: REP_HORIZON || 4 },
+                weights: WEIGHTS,
+                weightInputs: {
+                    hackingExp: hackExp, repPerSec, repShortfall: repGap, moneyFarmRunning: farmRunning,
+                    scriptHackMoneyGain: bnm && bnm.ScriptHackMoneyGain, serverMaxMoney: bnm && bnm.ServerMaxMoney,
+                },
+                bn: bnm ? {
+                    WorldDaemonDifficulty: bnm.WorldDaemonDifficulty,
+                    HackingLevelMultiplier: bnm.HackingLevelMultiplier,
+                    AugmentationMoneyCost: bnm.AugmentationMoneyCost,
+                    AugmentationRepCost: bnm.AugmentationRepCost,
+                } : null,
+                player: {
+                    hackingLevel: pl.skills && pl.skills.hacking,
+                    hackingMult: (pl.mults && pl.mults.hacking) || 1,
+                    hackingExp: pl.exp && pl.exp.hacking,
+                },
+                nfg: NFG ? { ...NFG, repReq: (() => { try { return S.getAugmentationRepReq(NFG_NAME); } catch (e) { return null; } })() } : null,
+                installed: [...installed],
+                // buyable, not the selected list -- the replay must be free to choose differently
+                candidates: buyable.map(c => ({
+                    aug: c.aug, faction: c.faction, rep: c._rep, base: c.base,
+                    repReq: c.repReq, prereqs: c.prereqs, value: c.value, stats: c.stats,
+                })),
+            }), "w");
+            ns.tprint("dumped " + buyable.length + " candidates -> status/augbuy-board.json"
+                + "  (rfa-sync pulls it to the repo; replay with: node tools/augbuy-replay.mjs)");
+        } catch (e) { ns.tprint("dump FAILED: " + e); }
+    }
+
     // ---- report ----
     ns.tprint("=== augbuy " + (DO_BUY ? "(PURCHASED)" : "(DRY RUN -- add 'buy' to commit)") + " ===");
     if (!DONATE) {
@@ -401,7 +403,8 @@ export async function main(ns) {
             + "   horizon " + (REP_HORIZON || 4) + "h");
         if (selThreshold !== null) {
             ns.tprint("  NFG line: $" + fmt(settledNfg) + " per unit value -- what the next NFG level costs"
-                + " given this basket, so every aug kept beats it"
+                + " given this basket. Augs above it are NOT automatically wrong to keep: dropping one"
+                + " also frees a queue slot, cutting every NFG level by 1.9x"
                 + (Number.isFinite(selThreshold) && Math.abs(selThreshold - settledNfg) > settledNfg * 0.2
                     ? "   [search threshold $" + fmt(selThreshold) + "; baskets are scored on total round"
                       + " value, so the winner stands regardless]" : ""));
@@ -483,12 +486,17 @@ export async function main(ns) {
         ns.tprint("save, which is larger because every cheaper aug then moves up a slot. Judge on marg$/val.");
         ns.tprint("slot " + "aug".padEnd(34) + "     paid  value    $/val   marginal marg$/val  escal");
         for (const r of econ) {
-           // Judge against the ALTERNATIVE, not against the round's own best buy. Selection already
-            // dropped anything worse than the NFG level it displaces, so what is worth flagging is
-            // what came CLOSE to that line -- the augs you would lose first if the board shifted.
-            const weak = Number.isFinite(r.marginalPerValue) && (selThreshold !== null
-                ? r.marginalPerValue > settledNfg * 0.5
-                : r.marginalPerValue > best * 5);
+           // FLAG THE EXACT THING, NOT A PROXY. Both previous markers were ratio heuristics and both
+            // degenerated into flagging every row. Worse, "marg$/val is above the NFG line" does NOT
+            // mean an aug should go: dropping one also frees a QUEUE SLOT, making every NFG level 1.9x
+            // cheaper, while the money it frees is lumpy against a ladder that climbs 2.166x a step.
+            // On the live board all sixteen augs sat above the NFG line and not one was worth dropping.
+            //
+            // The decision is made by scoring whole baskets, so ask that question directly: would
+            // removing this aug (and anything depending on it) raise total round value? Normally
+            // nothing is flagged, which is the point -- a marker that fires constantly says nothing.
+            const weak = selThreshold !== null ? dropImproves(list, r.aug, budget, NFG, queueMult)
+                : (Number.isFinite(r.marginalPerValue) && r.marginalPerValue > best * 5);
             ns.tprint(
                 String(r.slot).padStart(4) + " " + String(r.aug).slice(0, 34).padEnd(34) +
                 " $" + fmt(r.paid).padStart(7) +
@@ -496,7 +504,7 @@ export async function main(ns) {
                 " $" + fmt(r.perValue).padStart(7) +
                 " $" + fmt(r.marginal).padStart(8) +
                 " $" + fmt(r.marginalPerValue).padStart(8) +
-                " " + r.escalation.toFixed(1).padStart(6) + "x" + (weak ? (selThreshold !== null ? "  <-- near NFG line" : "  <-- weak") : ""));
+                " " + r.escalation.toFixed(1).padStart(6) + "x" + (weak ? (selThreshold !== null ? "  <-- DROP IMPROVES ROUND" : "  <-- weak") : ""));
         }
         ns.tprint("     " + "TOTAL".padEnd(34) + " $" + fmt(totC).padStart(7) + " " + totV.toFixed(3).padStart(6)
             + " $" + fmt(totV > 0 ? totC / totV : 0).padStart(7) + "   avg $/value for the round");
