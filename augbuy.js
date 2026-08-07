@@ -188,11 +188,13 @@ export async function main(ns) {
     try { nfgValue = augValue(S.getAugmentationStats(NFG_NAME), WEIGHTS); } catch (e) {}
     let nfgPrice0 = 0;
     try { nfgPrice0 = S.getAugmentationPrice(NFG_NAME); } catch (e) {}
-    const nfgMarginalPerValue = (queued, cash) => {
-        if (!(nfgValue > 0) || !(nfgPrice0 > 0)) return Infinity;
-        let price = nfgPrice0 * Math.pow(1.9, Math.max(0, queued)), left = cash;
-        for (let n = 0; n < 200 && left >= price; n++) { left -= price; price *= 1.14 * 1.9; }
-        return price / nfgValue;      // the first level you CANNOT afford -- what an aug displaces
+    // How many NFG levels `cash` buys once `queued` augs are standing, and the price of the first
+    // level it does NOT buy -- which is what a marginal aug displaces.
+    const nfgLadder = (queued, cash) => {
+        if (!(nfgValue > 0) || !(nfgPrice0 > 0)) return { levels: 0, marginal: Infinity };
+        let price = nfgPrice0 * Math.pow(1.9, Math.max(0, queued)), left = Math.max(0, cash), n = 0;
+        while (n < 200 && left >= price) { left -= price; price *= 1.14 * 1.9; n++; }
+        return { levels: n, marginal: price / nfgValue };
     };
 
     // SELECTION vs ORDERING -- two decisions, two keys. See lib/aug-plan.js.
@@ -249,16 +251,38 @@ export async function main(ns) {
             // With the NFG tail off, money is NOT being spent to zero, so preserving it for the next
             // round is a real option and the relative cutoff is the right (only) rule available.
             if (NO_NFG || cIdx >= 0) return selectRound(affordableByRep, budget, base);
-            // TWO-PASS. The threshold is the marginal NFG level's price per unit value, but the NFG
-            // ladder starts at 1.9^(augs queued) -- which depends on the basket. So: seed a basket to
-            // size the ladder, price the ladder, then re-select against it. One iteration; the
-            // dependence is weak (basket size moves the ladder, not the ranking).
-            const seed = selectRound(affordableByRep, budget, base);
-            const rate = nfgMarginalPerValue(seed.length, budget - orderedCost(seed) * queueMult);
-            if (!(rate > 0) || !Number.isFinite(rate)) return seed;
-            selThreshold = rate;
-            // selectRound prices bases UNSCALED, so the threshold has to come back to that basis.
-            return selectRound(affordableByRep, budget, { ...base, altPricePerValue: rate / queueMult });
+            // THE THRESHOLD IS A FIXED POINT, AND ONE ITERATION DOES NOT REACH IT. The NFG ladder
+            // starts at 1.9^(augs queued), so a smaller basket leaves more cash AND a shallower
+            // exponent, which pushes the marginal level far up the ladder and inflates the threshold.
+            // Live: a single pass reported $743.41t per unit value where the settled answer was
+            // ~$137t -- 5x off, permissive enough to prune nothing.
+            //
+            // Rather than chase convergence (the map can oscillate between two basket sizes), iterate
+            // a few times and SCORE each candidate basket on the objective that actually matters:
+            //     round value = sum of aug values + (NFG levels the leftover buys) x value per level
+            // That is the real quantity being maximised -- augs and NFG competing for one pot of money
+            // that the install is about to destroy -- so picking the best iterate is not a heuristic
+            // tie-break, it is evaluating the thing directly. The relative-cutoff basket is included
+            // as a candidate too, so this can never do worse than the old rule.
+            const score = (sel) => {
+                const left = budget - orderedCost(sel) * queueMult;
+                const lad = nfgLadder(sel.length, left);
+                return sel.reduce((a, c) => a + (Number(c.value) || 0), 0) + lad.levels * nfgValue;
+            };
+            let cur = selectRound(affordableByRep, budget, base);
+            let best = { sel: cur, score: score(cur), rate: null };
+            for (let it = 0; it < 6; it++) {
+                const rate = nfgLadder(cur.length, budget - orderedCost(cur) * queueMult).marginal;
+                if (!(rate > 0) || !Number.isFinite(rate)) break;
+                // selectRound prices bases UNSCALED, so the threshold comes back to that basis.
+                const next = selectRound(affordableByRep, budget, { ...base, altPricePerValue: rate / queueMult });
+                const sc = score(next);
+                if (sc > best.score) best = { sel: next, score: sc, rate };
+                if (next.length === cur.length) break;      // settled
+                cur = next;
+            }
+            selThreshold = best.rate;
+            return best.sel;
         })();
     // orderedCost, not roundCost: precedence can force a cheap prereq into an early slot, so the
     // basket's real price depends on the order selectRound returned and must not be re-sorted.
@@ -443,7 +467,12 @@ export async function main(ns) {
         ns.tprint("save, which is larger because every cheaper aug then moves up a slot. Judge on marg$/val.");
         ns.tprint("slot " + "aug".padEnd(34) + "     paid  value    $/val   marginal marg$/val  escal");
         for (const r of econ) {
-            const weak = Number.isFinite(r.marginalPerValue) && r.marginalPerValue > best * 5;
+           // Judge against the ALTERNATIVE, not against the round's own best buy. Selection already
+            // dropped anything worse than the NFG level it displaces, so what is worth flagging is
+            // what came CLOSE to that line -- the augs you would lose first if the board shifted.
+            const weak = Number.isFinite(r.marginalPerValue) && (selThreshold !== null
+                ? r.marginalPerValue > selThreshold * 0.5
+                : r.marginalPerValue > best * 5);
             ns.tprint(
                 String(r.slot).padStart(4) + " " + String(r.aug).slice(0, 34).padEnd(34) +
                 " $" + fmt(r.paid).padStart(7) +
@@ -451,11 +480,39 @@ export async function main(ns) {
                 " $" + fmt(r.perValue).padStart(7) +
                 " $" + fmt(r.marginal).padStart(8) +
                 " $" + fmt(r.marginalPerValue).padStart(8) +
-                " " + r.escalation.toFixed(1).padStart(6) + "x" + (weak ? "  <-- weak" : ""));
+                " " + r.escalation.toFixed(1).padStart(6) + "x" + (weak ? (selThreshold !== null ? "  <-- near NFG line" : "  <-- weak") : ""));
         }
         ns.tprint("     " + "TOTAL".padEnd(34) + " $" + fmt(totC).padStart(7) + " " + totV.toFixed(3).padStart(6)
             + " $" + fmt(totV > 0 ? totC / totV : 0).padStart(7) + "   avg $/value for the round");
         ns.tprint("");
+    }
+
+    // WHAT THIS ROUND IS ACTUALLY WORTH. `value` is a weighted log-sum -- useful for ranking, not
+    // readable as progress. The exit gate is a HACKING LEVEL, and level = mult * bracket with the
+    // bracket fixed at a given exp, so the gate in multiplier terms is reqLevel * mult / level.
+    // Reported as a snapshot: the bracket keeps growing with exp, so the real requirement falls over
+    // time and this is the pessimistic reading.
+    let hackMult = 1;
+    for (const b of bought) { const h = Number(b.stats && b.stats.hacking); if (h > 1) hackMult *= h; }
+    const nfgMult = Math.pow(1.01, nfgBought.length);
+    if (bought.length || nfgBought.length) {
+        let line = "ROUND DELIVERS x" + (hackMult * nfgMult).toFixed(3) + " hacking"
+            + "  (augs x" + hackMult.toFixed(3) + (nfgBought.length ? ", NFG x" + nfgMult.toFixed(3) : "") + ")";
+        try {
+            const pl = ns.getPlayer();
+            const lvl = pl.skills.hacking, cur = (pl.mults && pl.mults.hacking) || 1;
+            const req = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
+            if (lvl > 0 && req > 0) {
+                const needMult = req * cur / lvl;               // mult required at TODAY's exp
+                const after = cur * hackMult * nfgMult;
+                const left = needMult / after;
+                line += left <= 1
+                    ? "   -- CLEARS the exit gate (needs x" + needMult.toFixed(2) + ", you reach x" + after.toFixed(2) + ")"
+                    : "   exit needs x" + needMult.toFixed(2) + " at today's exp; after this round x" + after.toFixed(2)
+                      + " -> ~" + Math.ceil(Math.log(left) / Math.log(hackMult * nfgMult)) + " more round(s) at this rate";
+            }
+        } catch (e) {}
+        ns.tprint(line);
     }
 
     ns.tprint(bought.length || nfgBought.length
