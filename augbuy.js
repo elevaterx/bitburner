@@ -287,6 +287,16 @@ export async function main(ns) {
     // orderedCost, not roundCost: precedence can force a cheap prereq into an early slot, so the
     // basket's real price depends on the order selectRound returned and must not be re-sorted.
     const planCost = DONATE ? null : orderedCost(list) * queueMult;
+    // THE OPERATIVE NUMBER IS THE SETTLED ONE. `selThreshold` is the value that was fed to the
+    // search that happened to produce the winning basket -- an input, not a property of the result.
+    // Reporting it read as "$743.58t per unit value" while the basket it chose actually leaves the
+    // next NFG level at ~$297t, and a reader has no way to tell those apart. The number that means
+    // something is what the NEXT NFG level costs given this basket, because that is the line every
+    // aug kept had to beat. The loose search threshold is not a correctness problem -- candidate
+    // baskets are scored on the true objective and the best one wins regardless of which threshold
+    // generated it -- but it is not the thing to print.
+    const settledNfg = DONATE ? Infinity
+        : nfgLadder(list.length, budget - orderedCost(list) * queueMult).marginal;
 
     const bought = [], blockedRep = [], blockedMoney = [];
     let money = ns.getPlayer().money, spent = 0, donated = 0;
@@ -389,10 +399,16 @@ export async function main(ns) {
             + (repPerSec > 0 ? " = " + (repGap / repPerSec / 3600).toFixed(2) + "h of income"
                              : " (no measurable rep income)")
             + "   horizon " + (REP_HORIZON || 4) + "h");
-        ns.tprint("  keep-an-aug threshold: " + (selThreshold !== null
-            ? "$" + fmt(selThreshold) + " per unit value -- the marginal NFG level it would displace"
-            : "relative x" + CUTOFF + " of the round's best buy"
-              + (NO_NFG ? " (NFG tail off, so unspent money survives to the next round)" : " (--cutoff given)")));
+        if (selThreshold !== null) {
+            ns.tprint("  NFG line: $" + fmt(settledNfg) + " per unit value -- what the next NFG level costs"
+                + " given this basket, so every aug kept beats it"
+                + (Number.isFinite(selThreshold) && Math.abs(selThreshold - settledNfg) > settledNfg * 0.2
+                    ? "   [search threshold $" + fmt(selThreshold) + "; baskets are scored on total round"
+                      + " value, so the winner stands regardless]" : ""));
+        } else {
+            ns.tprint("  keep-an-aug threshold: relative x" + CUTOFF + " of the round's best buy"
+                + (NO_NFG ? " (NFG tail off, so unspent money survives to the next round)" : " (--cutoff given)"));
+        }
         ns.tprint("budget $" + fmt(budget) + "  [" + budgetSrc + "]"
             + "   cash $" + fmt(money0)
             + (netWorth !== null ? "   net worth $" + fmt(netWorth) : ""));
@@ -471,7 +487,7 @@ export async function main(ns) {
             // dropped anything worse than the NFG level it displaces, so what is worth flagging is
             // what came CLOSE to that line -- the augs you would lose first if the board shifted.
             const weak = Number.isFinite(r.marginalPerValue) && (selThreshold !== null
-                ? r.marginalPerValue > selThreshold * 0.5
+                ? r.marginalPerValue > settledNfg * 0.5
                 : r.marginalPerValue > best * 5);
             ns.tprint(
                 String(r.slot).padStart(4) + " " + String(r.aug).slice(0, 34).padEnd(34) +
@@ -501,7 +517,13 @@ export async function main(ns) {
         try {
             const pl = ns.getPlayer();
             const lvl = pl.skills.hacking, cur = (pl.mults && pl.mults.hacking) || 1;
-            const req = ns.getServerRequiredHackingLevel("w0r1d_d43m0n");
+            // w0r1d_d43m0n is hidden from server lookups until The Red Pill is INSTALLED
+            // (ServerHelpers.ts:340-343), so this throws for the entire run-up -- which is exactly
+            // when the number is useful. Fall back to the definition: base requiredHackingSkill 3000
+            // (servers.ts:1553) scaled by the node's WorldDaemonDifficulty (ServerHelpers.ts:422-423).
+            let req = 0;
+            try { req = ns.getServerRequiredHackingLevel("w0r1d_d43m0n"); } catch (e) {}
+            if (!(req > 0)) req = 3000 * ((bnm && bnm.WorldDaemonDifficulty) || 1);
             if (lvl > 0 && req > 0) {
                 const needMult = req * cur / lvl;               // mult required at TODAY's exp
                 const after = cur * hackMult * nfgMult;
