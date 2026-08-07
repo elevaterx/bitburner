@@ -22,18 +22,25 @@
  *    --cutoff K  drop an aug whose realized $/value is worse than K x the round's best buy
  *                (default 10). Guards the tail of a long round, where the 1.9^slot escalation
  *                makes a cheap aug cost more than it is worth deferring one install.
- *    --budget N  plan against N dollars instead of your CASH. Your buying power is usually net
- *                worth, not cash -- the trader keeps ~90% of it in open positions -- so a plan
- *                built on cash alone badly understates the round. Pass your net worth to see the
- *                real basket, then liquidate (panel: Trader 'SELL ALL') before committing.
- *                augbuy deliberately does NOT read ns.stock itself: that would add stock-API RAM
- *                to an already ~45GB script and make it fail outright without TIX access.
+ *    --budget N  plan against N dollars. The DEFAULT is now your NET WORTH, read from
+ *                trader-data.txt (which trader.js publishes every tick) -- not your cash. The
+ *                trader keeps ~90% of the pile in open positions, so a cash-only plan understates
+ *                the round badly and picks a different, worse basket. Falls back to cash when
+ *                trader-data.txt is missing, stale (>300s) or from a previous BitNode, and says so.
+ *                augbuy still does NOT read ns.stock itself: every ns.stock symbol in the source
+ *                costs static RAM whether it runs or not, and this must start without TIX access.
+ *                Liquidate (panel: Trader 'SELL ALL') before committing a plan above your cash.
+ *    --rep-horizon H   how many hours of your existing rep income make a faction_rep multiplier
+ *                worth buying (default 4). With a gang running, respect converts to faction rep for
+ *                free, so faction_rep augs are usually worthless -- this is the knob that says how
+ *                close to free counts as free. Set it high to buy rep augs again.
  *
  *  Real singularity calls (needs SF4) -- RAM is significant (~40-50GB); run on demand, not
  *  continuously (kill xpfarm briefly if home is tight). Excludes "The Red Pill" (node-exit;
  *  install that deliberately as the last step). Does NOT install -- you install when ready.
  *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
-import { augValue, selectRound, roundCost, roundEconomics, nodeWeights, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
+import { augValue, selectRound, roundCost, roundEconomics, nodeWeights, gangRepPerSec, maxRepGap,
+         DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -44,6 +51,8 @@ export async function main(ns) {
     const WHY    = ns.args.includes("--why") || ns.args.includes("why");
     const bIdx   = ns.args.indexOf("--budget");
     const BUDGET_ARG = bIdx >= 0 ? Number(ns.args[bIdx + 1]) : NaN;
+    const hIdx   = ns.args.indexOf("--rep-horizon");
+    const REP_HORIZON = hIdx >= 0 && Number(ns.args[hIdx + 1]) > 0 ? Number(ns.args[hIdx + 1]) : undefined;
     const cIdx   = ns.args.indexOf("--cutoff");
     const CUTOFF = cIdx >= 0 && Number.isFinite(Number(ns.args[cIdx + 1]))
         ? Number(ns.args[cIdx + 1]) : DEFAULT_VALUE_CUTOFF;
@@ -65,12 +74,8 @@ export async function main(ns) {
     try { farmRunning = ns.ps("home").some(p => p.filename === "coordinator.js"); } catch (e) {}
     let hackExp = undefined;
     try { const pl = ns.getPlayer(); hackExp = (pl.exp && pl.exp.hacking) || undefined; } catch (e) {}
-    const WEIGHTS = nodeWeights({
-        hackingExp: hackExp,
-        scriptHackMoneyGain: bnm && bnm.ScriptHackMoneyGain,
-        serverMaxMoney: bnm && bnm.ServerMaxMoney,
-        moneyFarmRunning: farmRunning,
-    });
+    // WEIGHTS ARE COMPUTED BELOW, NOT HERE. faction_rep's weight depends on how big the rep gap
+    // across the CANDIDATE LIST is, so the candidates have to exist first. See the rep-engine block.
 
     const isHackingAug = (aug) => {
         try {
@@ -96,7 +101,7 @@ export async function main(ns) {
                 try { base = S.getAugmentationBasePrice(aug); } catch (e) { base = 0; }
                 try { stats = S.getAugmentationStats(aug); } catch (e) { stats = {}; }
                 cand.set(aug, {
-                    aug, faction: f, _rep: rep, base, value: augValue(stats, WEIGHTS),
+                    aug, faction: f, _rep: rep, base, stats,   // value is scored after WEIGHTS exist
                     repReq: S.getAugmentationRepReq(aug), prereqs: S.getAugmentationPrereq(aug),
                 });
             }
@@ -105,6 +110,50 @@ export async function main(ns) {
 
     // Only augs whose prerequisites are already INSTALLED are buyable this round.
     const buyable = [...cand.values()].filter(c => c.prereqs.every(p => installed.has(p)));
+
+    // ---- REP ENGINE. Is reputation actually the thing holding you back?
+    //
+    // faction_rep is INSTRUMENTAL -- it buys nothing by itself, it only shortens the wait for the
+    // augs that do raise your hacking level. Weighting it a flat 1.0, level with `hacking`, silently
+    // assumes rep is always scarce. With a 12-member gang running that is false: gang respect
+    // converts to faction rep at faction_rep * respectGain * favorMult / 75 (Gang.ts:152-155), which
+    // is thousands of rep/sec, free and unbounded.
+    //
+    // The cost of getting this wrong, measured live: a round bought ADR-V1, ADR-V2 and The Shadow's
+    // Simulacrum -- three augs with ZERO hacking contribution -- for 37% of the round's value. From
+    // slots 4, 5 and 7 they pushed every cheaper hacking aug up the 1.9^n curve, so the round cost
+    // $175.28b for a 1.975x hacking multiplier that the six hacking augs alone deliver for $89.60b.
+    //
+    // Both inputs are read, not assumed, because both change: the gang's respect rate climbs all
+    // node, and the gap shrinks every time you buy. gang-data.txt is node-scoped against
+    // getResetInfo().lastNodeReset -- a file left over from the previous BitNode would otherwise
+    // claim a rep engine that no longer exists.
+    let resetInfo = null; try { resetInfo = ns.getResetInfo(); } catch (e) {}
+    const nodeStart = resetInfo && resetInfo.lastNodeReset;
+    let gRead = null;
+    try { const raw = ns.read("gang-data.txt"); if (raw) gRead = JSON.parse(raw); } catch (e) {}
+    if (gRead && typeof gRead.ts === "number" && Number.isFinite(nodeStart) && gRead.ts < nodeStart) gRead = null;
+    let gangFavor = 0, repPerSec = 0, repSrc = "no gang-data.txt -- rep treated as the constraint";
+    if (gRead && gRead.faction) {
+        try { gangFavor = S.getFactionFavor(gRead.faction); } catch (e) {}
+        repPerSec = gangRepPerSec(gRead, gangFavor);
+        const age = Math.round((Date.now() - (gRead.ts || 0)) / 1000);
+        repSrc = gRead.faction + " gang, favor " + gangFavor.toFixed(0) + ", data " + age + "s old";
+        if (age > 600) { repPerSec = 0; repSrc += " -- STALE, rep treated as the constraint"; }
+    }
+    // The gap that matters is the LARGEST one still standing over augs that do something other than
+    // raise rep -- i.e. how much rep until nothing you want is gated. Pure-rep augs are excluded
+    // from that max by maxRepGap, or they would justify their own purchase.
+    const repGap = maxRepGap(buyable.map(c => ({ repReq: c.repReq, rep: c._rep, stats: c.stats })));
+
+    const WEIGHTS = nodeWeights({
+        hackingExp: hackExp,
+        scriptHackMoneyGain: bnm && bnm.ScriptHackMoneyGain,
+        serverMaxMoney: bnm && bnm.ServerMaxMoney,
+        moneyFarmRunning: farmRunning,
+        repPerSec, repShortfall: repGap, repHorizonHours: REP_HORIZON,
+    });
+    for (const c of cand.values()) c.value = augValue(c.stats, WEIGHTS);
 
     // SELECTION vs ORDERING -- two decisions, two keys. See lib/aug-plan.js.
     //   ordering:  base cost DESCENDING is cheapest for a fixed basket (rearrangement inequality),
@@ -129,7 +178,25 @@ export async function main(ns) {
     }
 
     const money0 = ns.getPlayer().money;
-    const budget = Number.isFinite(BUDGET_ARG) && BUDGET_ARG > 0 ? BUDGET_ARG : money0;
+    // BUDGET DEFAULTS TO NET WORTH, NOT CASH. Your buying power is what you can liquidate, and the
+    // trader parks ~90% of the pile in open positions -- planning on cash alone built a round for
+    // $6.7t when $13.5t was available, which picks a materially different (and worse) basket, since
+    // a small budget buys cheap high-multiplier augs for slot 0 while a large one can afford the
+    // big-ticket ones. augbuy still does not touch ns.stock: every ns.stock symbol appearing in the
+    // source costs static RAM whether or not it runs, and augbuy must start on a save with no TIX
+    // access. trader.js already pays for the API and publishes trader-data.txt; ns.read is free.
+    let tRead = null;
+    try { const raw = ns.read("trader-data.txt"); if (raw) tRead = JSON.parse(raw); } catch (e) {}
+    if (tRead && typeof tRead.ts === "number" && Number.isFinite(nodeStart) && tRead.ts < nodeStart) tRead = null;
+    const tAge = tRead ? Math.round((Date.now() - (tRead.ts || 0)) / 1000) : Infinity;
+    // 300s: the trader rewrites this every price tick (~6s), so anything older means it is not
+    // running and the positions it describes may already have been sold.
+    const netWorth = tRead && Number.isFinite(tRead.net) && tAge <= 300 ? tRead.net : null;
+    let budgetSrc;
+    let budget;
+    if (Number.isFinite(BUDGET_ARG) && BUDGET_ARG > 0) { budget = BUDGET_ARG; budgetSrc = "--budget"; }
+    else if (netWorth !== null && netWorth > money0) { budget = netWorth; budgetSrc = "net worth (trader-data.txt, " + tAge + "s old)"; }
+    else { budget = money0; budgetSrc = netWorth !== null ? "cash (= net worth)" : "cash -- no fresh trader-data.txt; run trader.js or pass --budget"; }
     const affordableByRep = buyable.filter(c => c._rep >= c.repReq);
     // The donate path can manufacture rep, so it can't be pre-selected against a rep filter --
     // fall back to the whole buyable set, ordered cheapest-for-the-basket.
@@ -178,11 +245,19 @@ export async function main(ns) {
             ns.tprint("QUEUE ESCALATION x" + queueMult.toFixed(1) + " -- augs bought but NOT installed."
                 + " Every price below is base x" + queueMult.toFixed(1) + ". INSTALL to reset it to x1.");
         }
-        ns.tprint("weights: money-farm mults x" + (WEIGHTS.hacking_money / 0.5).toFixed(2)
-            + "  (node " + (bnm ? ((bnm.ScriptHackMoneyGain ?? 1) * (bnm.ServerMaxMoney ?? 1)).toFixed(2) : "?")
-            + ", coordinator " + (farmRunning ? "running" : "STOPPED") + ")");
-        ns.tprint("budget $" + fmt(budget) + (Number.isFinite(BUDGET_ARG) && BUDGET_ARG > 0
-            ? "  (--budget; your CASH is $" + fmt(money0) + ")" : "  (cash -- pass --budget <net worth> to plan against positions too)"));
+        ns.tprint("weights: money-farm x" + (WEIGHTS.hacking_money / 0.5).toFixed(2)
+            + " (node " + (bnm ? ((bnm.ScriptHackMoneyGain ?? 1) * (bnm.ServerMaxMoney ?? 1)).toFixed(2) : "?")
+            + ", coordinator " + (farmRunning ? "running" : "STOPPED") + ")"
+            + "   exp-channel x" + (WEIGHTS.hacking_exp).toFixed(3)
+            + "   faction_rep x" + (WEIGHTS.faction_rep).toFixed(3));
+        ns.tprint("  rep: " + fmt(repPerSec) + "/s [" + repSrc + "]"
+            + "   largest gap " + fmt(repGap) + " rep"
+            + (repPerSec > 0 ? " = " + (repGap / repPerSec / 3600).toFixed(2) + "h of income"
+                             : " (no measurable rep income)")
+            + "   horizon " + (REP_HORIZON || 4) + "h");
+        ns.tprint("budget $" + fmt(budget) + "  [" + budgetSrc + "]"
+            + "   cash $" + fmt(money0)
+            + (netWorth !== null ? "   net worth $" + fmt(netWorth) : ""));
         if (planCost !== null && planCost > money0) {
             ns.tprint("LIQUIDATE FIRST: this plan needs $" + fmt(planCost) + " but you hold $" + fmt(money0)
                 + " in cash. Panel -> Trader -> SELL ALL, then re-run.");

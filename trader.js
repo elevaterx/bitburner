@@ -204,6 +204,19 @@ export async function main(ns) {
             budget -= shares * price + COMMISSION;
         }
 
+        // NET WORTH FEED. augbuy has to plan against net worth, not cash -- the trader deliberately
+        // keeps ~90% of the pile in open positions, so a plan built on cash alone halves the round.
+        // augbuy cannot read ns.stock itself: Bitburner charges static RAM for every ns.stock symbol
+        // that appears in a script's source whether or not it runs, and augbuy is already ~45GB and
+        // must still start on a save with no TIX access. So the script that already pays for the
+        // stock API publishes the number and augbuy reads it for free (ns.read is 0GB).
+        try {
+            ns.write("trader-data.txt", JSON.stringify({
+                ts: Date.now(), cash: ns.getPlayer().money, net: netWorth,
+                market: netWorth - ns.getPlayer().money,
+            }), "w");
+        } catch (e) {}
+
         report(ns, statusLine(ns, symbols, use4S, canShort, netWorth));
 
         // sleep to the next price tick (v3), with a fallback for older APIs

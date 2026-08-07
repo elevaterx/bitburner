@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   AUG_PRICE_MULT, DEFAULT_WEIGHTS, BASE_WEIGHTS, augValue, valueDensity, roundCost, selectRound,
   moneyFarmWeight, nodeWeights, roundEconomics,
-  skillBracket, expChannelWeight,
+  skillBracket, expChannelWeight, repWeight, gangRepPerSec, maxRepGap, hasHackingValue,
 } from "../lib/aug-plan.js";
 
 test("augValue: weighted log-sum, ignores mults <= 1 and unknown keys", () => {
@@ -278,4 +278,85 @@ test("BN3 case: the exp channel collapses and hacking-level augs win", () => {
   const pureExp = { hacking_exp: 1.60 };
   assert.ok(augValue(core, w) > augValue(pureExp, w) * 3,
             "a hacking-level aug should dominate a bigger pure-exp aug once the channel is priced");
+});
+
+test("hasHackingValue: pure-rep augs do not count", () => {
+  assert.equal(hasHackingValue(null), false);
+  assert.equal(hasHackingValue({}), false);
+  // ADR-V1 / The Shadow's Simulacrum shape -- rep only
+  assert.equal(hasHackingValue({ faction_rep: 1.5, company_rep: 1.5 }), false);
+  assert.equal(hasHackingValue({ hacking_grow: 1.02 }), true);
+  assert.equal(hasHackingValue({ hacking: 1.1, faction_rep: 1.5 }), true);
+  // a multiplier of exactly 1 is not a contribution
+  assert.equal(hasHackingValue({ hacking: 1 }), false);
+});
+
+test("gangRepPerSec: matches Gang.ts:152-155 and degrades to 0, not NaN", () => {
+  // faction_rep 3.654 x respect 2.9k/s x favorMult 2.594 / 75  -- the live BN2 NiteSec reading
+  const r = gangRepPerSec({ factionRepMult: 3.654, respectPerSec: 2900 }, 159.4);
+  assert.ok(Math.abs(r - (3.654 * 2900 * 2.594) / 75) < 1e-9);
+  assert.ok(r > 360 && r < 370, "should reproduce hud1's ~363/s, got " + r);
+  // favor 0 is legitimate, favorMult 1
+  assert.equal(gangRepPerSec({ factionRepMult: 1, respectPerSec: 75 }, 0), 1);
+  // anything unusable is "no engine", not a NaN that would poison repWeight
+  assert.equal(gangRepPerSec({}, 10), 0);
+  assert.equal(gangRepPerSec({ factionRepMult: 1, respectPerSec: 0 }, 10), 0);
+  assert.equal(gangRepPerSec(null, 10), 0);
+  assert.equal(gangRepPerSec({ factionRepMult: 1, respectPerSec: 100 }, -5), 100 / 75);
+});
+
+test("maxRepGap: largest gap over augs that are not pure rep", () => {
+  const cands = [
+    { repReq: 1_000_000, rep: 100_000, stats: { faction_rep: 1.5 } },   // pure rep -- excluded
+    { repReq: 500_000, rep: 100_000, stats: { hacking: 1.1 } },         // gap 400k
+    { repReq: 200_000, rep: 100_000, stats: { hacking_exp: 1.2 } },     // gap 100k
+    { repReq: 50_000, rep: 100_000, stats: { hacking: 1.5 } },          // already affordable
+  ];
+  assert.equal(maxRepGap(cands), 400_000);
+  assert.equal(maxRepGap([]), 0);
+  assert.equal(maxRepGap(null), 0);
+  // nothing gated -> 0, which is what tells repWeight the multiplier is worthless
+  assert.equal(maxRepGap([{ repReq: 10, rep: 99, stats: { hacking: 1.1 } }]), 0);
+});
+
+test("repWeight: full weight without an engine, scaled by hours of income with one", () => {
+  // no measurement -> unchanged from the old fixed weight. A caller that cannot measure must never
+  // be worse off than before this existed.
+  assert.equal(repWeight({}, 1), 1);
+  assert.equal(repWeight({ repPerSec: 0, repShortfall: 1e6 }, 1), 1);
+  // engine running, nothing gated -> worthless
+  assert.equal(repWeight({ repPerSec: 1565, repShortfall: 0 }, 1), 0);
+  // the live case: 180k of gap against 1565 rep/s is 32s of income -> ~0.008
+  const live = repWeight({ repPerSec: 1565, repShortfall: 180_000 }, 1);
+  assert.ok(live > 0.007 && live < 0.009, "expected ~0.008, got " + live);
+  // a weak engine against a big gap still saturates at the base weight
+  assert.equal(repWeight({ repPerSec: 50, repShortfall: 1e6 }, 1), 1);
+  // horizon is the knob: same numbers, 24h horizon -> 1/6 the weight of a 4h one
+  const h4 = repWeight({ repPerSec: 100, repShortfall: 100 * 3600 * 2 }, 1);
+  const h24 = repWeight({ repPerSec: 100, repShortfall: 100 * 3600 * 2, repHorizonHours: 24 }, 1);
+  assert.ok(Math.abs(h4 - 0.5) < 1e-12);
+  assert.ok(Math.abs(h24 - 2 / 24) < 1e-12);
+});
+
+test("nodeWeights: faction_rep collapses once a gang is closing the gap for free", () => {
+  const base = nodeWeights({});
+  assert.equal(base.faction_rep, 1);
+  const gang = nodeWeights({ repPerSec: 1565, repShortfall: 180_000 });
+  assert.ok(gang.faction_rep < 0.01);
+  // and that has to change the ORDER: a pure-rep aug must lose to a small hacking aug
+  const pureRep = { faction_rep: 1.5, company_rep: 1.5 };   // ADR-V2 shape
+  const smallHack = { hacking: 1.03 };
+  assert.ok(augValue(pureRep, base) > augValue(smallHack, base),
+            "without a gang the rep aug should still win -- rep is the constraint then");
+  assert.ok(augValue(pureRep, gang) < augValue(smallHack, gang),
+            "with a gang running the rep aug must lose to even a 3% hacking multiplier");
+});
+
+test("nodeWeights: rep and exp discounts are independent", () => {
+  const w = nodeWeights({ hackingExp: 5.7e5, repPerSec: 1565, repShortfall: 180_000 });
+  // exp channel still discounted by 32/bracket, untouched by the rep math
+  assert.ok(Math.abs(w.hacking_exp - expChannelWeight(skillBracket(5.7e5))) < 1e-12);
+  assert.ok(Math.abs(w.hacking_speed - 0.5 * expChannelWeight(skillBracket(5.7e5))) < 1e-12);
+  // hacking itself is never discounted -- it is the numeraire
+  assert.equal(w.hacking, 1);
 });
