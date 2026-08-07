@@ -486,3 +486,61 @@ test("NFG ladder: each level costs 1.14 x 1.9 the last, and self-limits", () => 
   // 11 levels is +1% each, multiplicative
   assert.ok(Math.abs(Math.pow(1.01, levels) - 1.1157) < 1e-4);
 });
+
+test("selectRound: altPricePerValue is an absolute keep/drop threshold, not a relative one", () => {
+  // Two augs. B's marginal cost per unit value is ~10x A's, so the RELATIVE cutoff keeps it at 10
+  // and drops it at 1. An absolute threshold decides on the number itself, whatever else is present.
+  const cands = [
+    { aug: "A", base: 10e9, value: 1.0, prereqs: [] },     // $10b/value at slot 0
+    { aug: "B", base: 1e9, value: 0.01, prereqs: [] },     // $190b/value at slot 1
+  ];
+  const keepBoth = selectRound(cands, 1e15, { altPricePerValue: 1e12 }).map((c) => c.aug);
+  assert.deepEqual(keepBoth, ["A", "B"], "a generous threshold keeps the weak aug");
+  const dropB = selectRound(cands, 1e15, { altPricePerValue: 1e10 }).map((c) => c.aug);
+  assert.deepEqual(dropB, ["A"], "a tight threshold drops it regardless of what A costs");
+  // and it must not care about the rest of the basket, which is the whole point
+  const withExtra = [...cands, { aug: "C", base: 50e9, value: 5.0, prereqs: [] }];
+  assert.ok(!selectRound(withExtra, 1e15, { altPricePerValue: 1e10 }).some((c) => c.aug === "B"),
+            "adding a cheaper-per-value aug must not change B's verdict under an absolute threshold");
+});
+
+test("selectRound: adding candidates never collapses the basket (the frozen-anchor regression)", () => {
+  // Reproduction of the live failure. A long tail of cheap high-density augs used to ratchet the
+  // relative anchor down until the basket ate itself: with twelve extra candidates the round fell to
+  // ONE aug worth 0.049, after a live run had already lost SPTN-97, Xanipher and Artificial
+  // Bio-neural Network Implant and dropped from 1.051 to 0.622 of value.
+  const known = [
+    { aug: "SPTN-97", base: 14.63e9, value: 0.140, prereqs: [] },
+    { aug: "Xanipher", base: 12.75e9, value: 0.195, prereqs: [] },
+    { aug: "ABNI", base: 9.0e9, value: 0.115, prereqs: [] },
+    { aug: "nextSENS", base: 5.78e9, value: 0.182, prereqs: [] },
+    { aug: "BitWire", base: 30e6, value: 0.049, prereqs: [] },
+    { aug: "NeurotrainerI", base: 12e6, value: 0.009, prereqs: [] },
+  ];
+  const V = (l) => l.reduce((a, c) => a + c.value, 0);
+  const pads = [0, 4, 8, 12, 24];
+
+  // INVARIANT 1 -- the basket never collapses, on either threshold rule.
+  for (const pad of pads) {
+    const extra = Array.from({ length: pad }, (_, i) =>
+      ({ aug: "chain" + i, base: 300e6 * Math.pow(1.25, i), value: 0.06, prereqs: [] }));
+    const all = [...known, ...extra];
+    for (const opts of [{ held: new Set() }, { held: new Set(), altPricePerValue: 2e12 }]) {
+      const got = selectRound(all, 15.54e12, opts);
+      assert.ok(got.length > 1, "pad " + pad + ": collapsed to " + got.length + " aug(s)");
+    }
+  }
+
+  // INVARIANT 2 -- under the NFG-anchored (absolute) threshold, MORE candidates never make the round
+  // materially worse. That is the property the relative rule cannot hold: its comparison point is the
+  // basket itself, so every candidate you add moves the goalposts.
+  let prev = 0;
+  for (const pad of pads) {
+    const extra = Array.from({ length: pad }, (_, i) =>
+      ({ aug: "chain" + i, base: 300e6 * Math.pow(1.25, i), value: 0.06, prereqs: [] }));
+    const v = V(selectRound([...known, ...extra], 15.54e12, { held: new Set(), altPricePerValue: 2e12 }));
+    assert.ok(v >= prev * 0.9, "pad " + pad + ": value fell to " + v.toFixed(3) + " from " + prev.toFixed(3));
+    prev = Math.max(prev, v);
+  }
+  assert.ok(prev > 0.9, "the padded board should reach ~0.99 of value, got " + prev.toFixed(3));
+});

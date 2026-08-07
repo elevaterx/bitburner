@@ -175,6 +175,26 @@ export async function main(ns) {
     });
     for (const c of cand.values()) c.value = augValue(c.stats, WEIGHTS);
 
+    // THE PRICE OF VALUE, IN DOLLARS. NeuroFlux Governor is the alternative use of every dollar not
+    // spent on augs, because installing destroys what is left (Player.money = 1000). So the marginal
+    // NFG level gives selectRound an ABSOLUTE threshold: keep an aug exactly when it buys value more
+    // cheaply than the NFG level its cost would displace. That replaces the old relative cutoff,
+    // which compared augs only to each other and so had no idea whether the whole round was a good
+    // use of money. Measured on the live board the difference is 1.506 vs 1.063 of round value.
+    //
+    // nfgValue is scored through the SAME weights as everything else rather than hardcoded, so it
+    // tracks the node: NFG's hacking_money +1% is worth nothing here with the farm stopped.
+    let nfgValue = 0;
+    try { nfgValue = augValue(S.getAugmentationStats(NFG_NAME), WEIGHTS); } catch (e) {}
+    let nfgPrice0 = 0;
+    try { nfgPrice0 = S.getAugmentationPrice(NFG_NAME); } catch (e) {}
+    const nfgMarginalPerValue = (queued, cash) => {
+        if (!(nfgValue > 0) || !(nfgPrice0 > 0)) return Infinity;
+        let price = nfgPrice0 * Math.pow(1.9, Math.max(0, queued)), left = cash;
+        for (let n = 0; n < 200 && left >= price; n++) { left -= price; price *= 1.14 * 1.9; }
+        return price / nfgValue;      // the first level you CANNOT afford -- what an aug displaces
+    };
+
     // SELECTION vs ORDERING -- two decisions, two keys. See lib/aug-plan.js.
     //   ordering:  base cost DESCENDING is cheapest for a fixed basket (rearrangement inequality),
     //              because purchase i costs base_i * 1.9^i.
@@ -220,9 +240,26 @@ export async function main(ns) {
     const affordableByRep = buyable.filter(c => c._rep >= c.repReq);
     // The donate path can manufacture rep, so it can't be pre-selected against a rep filter --
     // fall back to the whole buyable set, ordered cheapest-for-the-basket.
+    let selThreshold = null;      // $/value of the marginal NFG level, once known -- for the report
     const list = DONATE
         ? buyable.sort((a, b) => (b.base - a.base) || (a.repReq - b.repReq))
-        : selectRound(affordableByRep, budget, { valueCutoff: CUTOFF, priceScale: queueMult, held: installed });
+        : (() => {
+            const base = { valueCutoff: CUTOFF, priceScale: queueMult, held: installed };
+            // An explicit --cutoff is the user overriding policy; honour it and skip the anchoring.
+            // With the NFG tail off, money is NOT being spent to zero, so preserving it for the next
+            // round is a real option and the relative cutoff is the right (only) rule available.
+            if (NO_NFG || cIdx >= 0) return selectRound(affordableByRep, budget, base);
+            // TWO-PASS. The threshold is the marginal NFG level's price per unit value, but the NFG
+            // ladder starts at 1.9^(augs queued) -- which depends on the basket. So: seed a basket to
+            // size the ladder, price the ladder, then re-select against it. One iteration; the
+            // dependence is weak (basket size moves the ladder, not the ranking).
+            const seed = selectRound(affordableByRep, budget, base);
+            const rate = nfgMarginalPerValue(seed.length, budget - orderedCost(seed) * queueMult);
+            if (!(rate > 0) || !Number.isFinite(rate)) return seed;
+            selThreshold = rate;
+            // selectRound prices bases UNSCALED, so the threshold has to come back to that basis.
+            return selectRound(affordableByRep, budget, { ...base, altPricePerValue: rate / queueMult });
+        })();
     // orderedCost, not roundCost: precedence can force a cheap prereq into an early slot, so the
     // basket's real price depends on the order selectRound returned and must not be re-sorted.
     const planCost = DONATE ? null : orderedCost(list) * queueMult;
@@ -328,6 +365,10 @@ export async function main(ns) {
             + (repPerSec > 0 ? " = " + (repGap / repPerSec / 3600).toFixed(2) + "h of income"
                              : " (no measurable rep income)")
             + "   horizon " + (REP_HORIZON || 4) + "h");
+        ns.tprint("  keep-an-aug threshold: " + (selThreshold !== null
+            ? "$" + fmt(selThreshold) + " per unit value -- the marginal NFG level it would displace"
+            : "relative x" + CUTOFF + " of the round's best buy"
+              + (NO_NFG ? " (NFG tail off, so unspent money survives to the next round)" : " (--cutoff given)")));
         ns.tprint("budget $" + fmt(budget) + "  [" + budgetSrc + "]"
             + "   cash $" + fmt(money0)
             + (netWorth !== null ? "   net worth $" + fmt(netWorth) : ""));
