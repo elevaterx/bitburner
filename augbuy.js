@@ -7,14 +7,24 @@
  *
  *  Buy in SMALL rounds then INSTALL: each aug queued in a round multiplies the next one's
  *  MONEY price by 1.9x, so one huge round blows up cost. This buys until the next is
- *  unaffordable; install between rounds so prices reset and prereqs unlock.
+ *  unaffordable; install between rounds so prices reset.
+ *
+ *  PREREQ CHAINS ARE BOUGHT IN ONE ROUND. A queued prereq satisfies the purchase gate
+ *  (hasAugmentationPrereqs -> Player.hasAugmentation with ignoreQueued=false, Person.ts:233), so
+ *  Embedded Netburner Module -> Core -> Core V2 -> Core V3 is a single round's work. Selection prices
+ *  a dependent together with its unheld prereqs, and purchase order puts prereqs first even where
+ *  base-descending would not -- which costs real money, and the estimate shows it.
  *
  *  usage: run augbuy.js [buy] [donate] [all] [nfg] [--why] [--budget N] [--cutoff K]
  *    (no flags)  DRY RUN -- report what it WOULD buy / donate and what's blocked
  *    buy         actually purchase
  *    donate      buy missing rep via donation (favor >= getFavorToDonate(); 75 in BN3) -- can cost trillions+
  *    all         include non-hacking augs too (for the Daedalus 30-aug count)
- *    nfg         also buy NeuroFlux Governor levels (expensive; buy deliberately)
+ *    nonfg       do NOT buy NeuroFlux Governor levels. The default is to finish every round by
+ *                buying NFG until the money runs out: installing DESTROYS your cash
+ *                (Player.money = 1000, PlayerObjectGeneralMethods.ts:102), so spare money has no
+ *                other use once you commit to installing. Each level costs 2.166x the last.
+ *    --nfg-reserve N   hold N dollars back from the NFG tail (default 0 -- spend to zero).
  *    --why       print the per-slot economics of the chosen round: what each aug costs at its
  *                slot, and the MARGINAL cost of including it (higher, because adding an aug pushes
  *                every cheaper one down a slot). Read this before committing -- it is the column
@@ -39,22 +49,26 @@
  *  continuously (kill xpfarm briefly if home is tight). Excludes "The Red Pill" (node-exit;
  *  install that deliberately as the last step). Does NOT install -- you install when ready.
  *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
-import { augValue, selectRound, roundCost, roundEconomics, nodeWeights, gangRepPerSec, maxRepGap,
-         DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
+import { augValue, selectRound, roundCost, orderedCost, orderWithPrereqs, roundEconomics,
+         nodeWeights, gangRepPerSec, maxRepGap, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
 
 export async function main(ns) {
     ns.disableLog("ALL");
     const DO_BUY = ns.args.includes("buy");
     const DONATE = ns.args.includes("donate");
     const ALL    = ns.args.includes("all");
-    const NFG    = ns.args.includes("nfg");
+    const NO_NFG = ns.args.includes("nonfg");
+    const rIdx   = ns.args.indexOf("--nfg-reserve");
+    const NFG_RESERVE = rIdx >= 0 && Number(ns.args[rIdx + 1]) > 0 ? Number(ns.args[rIdx + 1]) : 0;
     const WHY    = ns.args.includes("--why") || ns.args.includes("why");
     const bIdx   = ns.args.indexOf("--budget");
     const BUDGET_ARG = bIdx >= 0 ? Number(ns.args[bIdx + 1]) : NaN;
     const hIdx   = ns.args.indexOf("--rep-horizon");
     const REP_HORIZON = hIdx >= 0 && Number(ns.args[hIdx + 1]) > 0 ? Number(ns.args[hIdx + 1]) : undefined;
     const cIdx   = ns.args.indexOf("--cutoff");
-    const CUTOFF = cIdx >= 0 && Number.isFinite(Number(ns.args[cIdx + 1]))
+    // "--cutoff Infinity" (or any huge number) must mean "prune nothing" -- Number.isFinite would
+    // have quietly turned that into the default 10.
+    const CUTOFF = cIdx >= 0 && Number(ns.args[cIdx + 1]) > 0 && !Number.isNaN(Number(ns.args[cIdx + 1]))
         ? Number(ns.args[cIdx + 1]) : DEFAULT_VALUE_CUTOFF;
     const S = ns.singularity;
     const NFG_NAME = "NeuroFlux Governor", REDPILL = "The Red Pill";
@@ -92,7 +106,7 @@ export async function main(ns) {
         try { list = S.getAugmentationsFromFaction(f); } catch (e) { continue; }
         for (const aug of list) {
             if (have.has(aug) || aug === REDPILL) continue;
-            if (aug === NFG_NAME && !NFG) continue;
+            if (aug === NFG_NAME) continue;      // handled by the NFG tail, not ranked against augs
             if (aug !== NFG_NAME && !ALL && !isHackingAug(aug)) continue;
             const rep = S.getFactionRep(f);
             const prev = cand.get(aug);
@@ -108,8 +122,14 @@ export async function main(ns) {
         }
     }
 
-    // Only augs whose prerequisites are already INSTALLED are buyable this round.
-    const buyable = [...cand.values()].filter(c => c.prereqs.every(p => installed.has(p)));
+    // PREREQS: a QUEUED prereq satisfies the gate. hasAugmentationPrereqs (FactionHelpers.tsx:56)
+    // calls Player.hasAugmentation(name) with ignoreQueued defaulting to false (Person.ts:233-241) --
+    // the game's own refusal even says "purchase or install". So a whole chain is buyable in ONE
+    // round, and requiring `installed` (as this did) silently discarded every chained aug on the
+    // board: the entire ENM Core line, Cranial Signal Processors Gen II-V, every Graphene upgrade.
+    // They were not reported as blocked either -- they simply never became candidates.
+    const candNames = new Set(cand.keys());
+    const buyable = [...cand.values()].filter(c => c.prereqs.every(p => installed.has(p) || candNames.has(p)));
 
     // ---- REP ENGINE. Is reputation actually the thing holding you back?
     //
@@ -202,8 +222,10 @@ export async function main(ns) {
     // fall back to the whole buyable set, ordered cheapest-for-the-basket.
     const list = DONATE
         ? buyable.sort((a, b) => (b.base - a.base) || (a.repReq - b.repReq))
-        : selectRound(affordableByRep, budget, { valueCutoff: CUTOFF, priceScale: queueMult });
-    const planCost = DONATE ? null : roundCost(list.map(c => c.base)) * queueMult;
+        : selectRound(affordableByRep, budget, { valueCutoff: CUTOFF, priceScale: queueMult, held: installed });
+    // orderedCost, not roundCost: precedence can force a cheap prereq into an early slot, so the
+    // basket's real price depends on the order selectRound returned and must not be re-sorted.
+    const planCost = DONATE ? null : orderedCost(list) * queueMult;
 
     const bought = [], blockedRep = [], blockedMoney = [];
     let money = ns.getPlayer().money, spent = 0, donated = 0;
@@ -236,6 +258,57 @@ export async function main(ns) {
         if (money < price) { blockedMoney.push({ ...c, price }); continue; }
         if (DO_BUY && !S.purchaseAugmentation(c.faction, c.aug)) { blockedMoney.push({ ...c, price }); continue; }
         money -= price; spent += price; bought.push({ ...c, price }); have.add(c.aug);
+    }
+
+    // ---- NFG TAIL ----
+    //
+    // WHY LAST, AND WHY TO ZERO.
+    // Last: every NFG level is its own entry in queuedAugmentations, so each one multiplies the price
+    // of everything bought after it by 1.9 (getGenericAugmentationPriceMultiplier, AugmentationHelpers
+    // .ts:32-38). NFG also has the smallest base on the board, so the rearrangement inequality puts it
+    // at the highest exponents anyway. Both arguments point the same way: buy augs first, NFG after.
+    //
+    // To zero: prestigeAugmentation sets Player.money = 1000 + CONSTANTS.Donations
+    // (PlayerObjectGeneralMethods.ts:102). Installing DESTROYS your cash. So the marginal NFG level
+    // being ~1700x worse dollar-for-value than the round's best aug does not matter -- the money has
+    // no other use once you commit to installing. It is only wrong if you DON'T install, which is why
+    // this says so loudly rather than assuming.
+    //
+    // The ladder compounds twice over: cost = base * 1.14^level * nodeMult * 1.9^queued, so each
+    // successive level costs 1.14 * 1.9 = 2.166x the one before. Roughly 11 levels per order of
+    // magnitude of spare cash, and it self-limits fast.
+    const NFG_LADDER = 1.14 * 1.9;
+    const nfgBought = [];
+    let nfgSpent = 0, nfgStop = "";
+    if (!NO_NFG && !DONATE) {
+        // NFG is sold by nearly every faction; buy from wherever you hold the most rep.
+        let nfgFaction = null, nfgRep = -1;
+        for (const f of factions) {
+            let offers = false;
+            try { offers = S.getAugmentationsFromFaction(f).includes(NFG_NAME); } catch (e) {}
+            if (!offers) continue;
+            const r = S.getFactionRep(f);
+            if (r > nfgRep) { nfgRep = r; nfgFaction = f; }
+        }
+        if (!nfgFaction) nfgStop = "no faction you belong to sells NeuroFlux Governor";
+        else {
+            // Live price already includes 1.14^level and the node multiplier; in a DRY RUN the augs
+            // above were not really queued, so their 1.9^n has to be applied by hand.
+            let price0 = 0, repReq0 = 0;
+            try { price0 = S.getAugmentationPrice(NFG_NAME); repReq0 = S.getAugmentationRepReq(NFG_NAME); } catch (e) {}
+            if (!(price0 > 0)) nfgStop = "could not price NeuroFlux Governor";
+            for (let n = 0; n < 200 && !nfgStop; n++) {
+                const price = DO_BUY ? S.getAugmentationPrice(NFG_NAME)
+                    : price0 * Math.pow(1.9, bought.length) * Math.pow(NFG_LADDER, n);
+                const need = DO_BUY ? S.getAugmentationRepReq(NFG_NAME) : repReq0 * Math.pow(1.14, n);
+                const repNow = DO_BUY ? S.getFactionRep(nfgFaction) : nfgRep;
+                if (repNow < need) { nfgStop = "rep " + fmt(repNow) + " < " + fmt(need) + " at " + nfgFaction; break; }
+                if (money - NFG_RESERVE < price) { nfgStop = "next level costs $" + fmt(price) + ", $" + fmt(Math.max(0, money - NFG_RESERVE)) + " left"; break; }
+                if (DO_BUY && !S.purchaseAugmentation(nfgFaction, NFG_NAME)) { nfgStop = "purchase refused by the game"; break; }
+                money -= price; spent += price; nfgSpent += price;
+                nfgBought.push({ level: n, price });
+            }
+        }
     }
 
     // ---- report ----
@@ -282,6 +355,38 @@ export async function main(ns) {
         ns.tprint("blocked on MONEY (" + blockedMoney.length + "):");
         for (const c of blockedMoney) ns.tprint("  - " + c.aug + "  $" + fmt(c.price));
     }
+    // REP-GATED CANDIDATES. These are filtered out before selectRound ever sees them, so without this
+    // section the report says "largest gap 268.8k rep" and never says what closing it would buy. That
+    // is the number that decides whether to commit now or wait twenty minutes, and money is usually
+    // slack enough that waiting wins.
+    if (!DONATE) {
+        const gated = buyable
+            .filter(c => c._rep < c.repReq && c.value > 0)
+            .sort((a, b) => (a.repReq - a._rep) - (b.repReq - b._rep));
+        if (gated.length) {
+            ns.tprint("REP-GATED (" + gated.length + ") -- not in the plan above; ETA at "
+                + fmt(repPerSec) + " rep/s" + (repPerSec > 0 ? "" : " (no income -- these need faction work or 'donate')") + ":");
+            let shown = 0;
+            for (const c of gated) {
+                if (shown++ >= 12) { ns.tprint("  ... and " + (gated.length - 12) + " more"); break; }
+                const gap = c.repReq - c._rep;
+                ns.tprint("  ~ " + c.aug.padEnd(38) + " [" + c.faction + "]  need " + fmt(gap) + " more rep"
+                    + (repPerSec > 0 ? "  ETA " + fmtDur(gap / repPerSec) : "")
+                    + "   value " + c.value.toFixed(3) + "  base $" + fmt(c.base));
+            }
+        }
+    }
+    if (nfgBought.length || nfgStop) {
+        ns.tprint("NFG TAIL: " + nfgBought.length + " level(s)  $" + fmt(nfgSpent)
+            + (nfgBought.length ? "  -> all multipliers x" + Math.pow(1.01, nfgBought.length).toFixed(4) : "")
+            + (nfgStop ? "   [stopped: " + nfgStop + "]" : ""));
+        if (nfgBought.length) {
+            ns.tprint("  each level costs 2.166x the last (1.14 level mult x 1.9 queue mult)."
+                + " Cash is DESTROYED on install (Player.money = 1000), so spending to zero is only");
+            ns.tprint("  correct if you install NOW. Pass 'nonfg' or --nfg-reserve N to hold money back.");
+            if (WHY) for (const l of nfgBought) ns.tprint("    NFG +" + String(l.level + 1).padStart(3) + "   $" + fmt(l.price));
+        }
+    }
     if (WHY && list.length) {
         // The diagnostic that makes a bad round visible WITHOUT trusting the selector. Every defect
         // this tool has shipped was caught by running it and reading the numbers, never by review or
@@ -312,9 +417,19 @@ export async function main(ns) {
         ns.tprint("");
     }
 
-    ns.tprint(bought.length
-        ? "Next: INSTALL (game UI, or singularity.installAugmentations) to apply -- then run again for the next round."
-        : "Nothing bought. Grind rep/level, or add 'donate' (favor>=150) / 'buy' as appropriate.");
+    ns.tprint(bought.length || nfgBought.length
+        ? "Next: INSTALL (game UI, or singularity.installAugmentations) to apply. The NFG tail assumes you"
+          + " do that now -- unspent cash is destroyed on install, and every queued aug keeps the 1.9x"
+          + " escalation standing until you do."
+        : "Nothing bought. Grind rep/level, or add 'donate' (favor >= getFavorToDonate()) / 'buy' as appropriate.");
+}
+
+function fmtDur(sec) {
+    if (!isFinite(sec)) return "--";
+    if (sec < 60) return Math.round(sec) + "s";
+    if (sec < 3600) return Math.round(sec / 60) + "m";
+    if (sec < 86400) return (sec / 3600).toFixed(1) + "h";
+    return (sec / 86400).toFixed(1) + "d";
 }
 
 function fmt(n) {

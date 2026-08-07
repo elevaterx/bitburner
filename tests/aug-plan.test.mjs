@@ -4,6 +4,7 @@ import {
   AUG_PRICE_MULT, DEFAULT_WEIGHTS, BASE_WEIGHTS, augValue, valueDensity, roundCost, selectRound,
   moneyFarmWeight, nodeWeights, roundEconomics,
   skillBracket, expChannelWeight, repWeight, gangRepPerSec, maxRepGap, hasHackingValue,
+  prereqClosure, orderWithPrereqs, orderedCost,
 } from "../lib/aug-plan.js";
 
 test("augValue: weighted log-sum, ignores mults <= 1 and unknown keys", () => {
@@ -359,4 +360,129 @@ test("nodeWeights: rep and exp discounts are independent", () => {
   assert.ok(Math.abs(w.hacking_speed - 0.5 * expChannelWeight(skillBracket(5.7e5))) < 1e-12);
   // hacking itself is never discounted -- it is the numeraire
   assert.equal(w.hacking, 1);
+});
+
+// ---------------------------------------------------------------- prerequisite chains
+// The ENM line, which is the real case this exists for.
+const ENM = [
+  { aug: "Embedded Netburner Module", base: 750e6, value: 0.077, prereqs: [] },
+  { aug: "ENM Core", base: 2.5e9, value: 0.180, prereqs: ["Embedded Netburner Module"] },
+  { aug: "ENM Core V2", base: 4.5e9, value: 0.300, prereqs: ["ENM Core"] },
+  { aug: "ENM Core V3", base: 7.5e9, value: 0.400, prereqs: ["ENM Core V2"] },
+];
+
+test("prereqClosure: transitive, skips what you already hold", () => {
+  const byName = new Map(ENM.map((c) => [c.aug, c]));
+  assert.deepEqual(prereqClosure("ENM Core V3", byName, new Set()),
+    ["Embedded Netburner Module", "ENM Core", "ENM Core V2"]);
+  // already installed -> the chain below it disappears
+  assert.deepEqual(prereqClosure("ENM Core V3", byName, new Set(["ENM Core"])), ["ENM Core V2"]);
+  assert.deepEqual(prereqClosure("Embedded Netburner Module", byName, new Set()), []);
+  // a prereq that is not a candidate at all contributes nothing (it is unbuyable, not free) --
+  // selectRound's pool prune is what removes the dependent
+  assert.deepEqual(prereqClosure("ENM Core", new Map([["ENM Core", ENM[1]]]), new Set()), []);
+});
+
+test("orderWithPrereqs: prereq-first, base-descending within what is legal", () => {
+  const ordered = orderWithPrereqs(ENM).map((c) => c.aug);
+  assert.deepEqual(ordered, ["Embedded Netburner Module", "ENM Core", "ENM Core V2", "ENM Core V3"]);
+  // the constraint is binding: unconstrained order would be the exact reverse (base descending)
+  const unconstrained = [...ENM].sort((a, b) => b.base - a.base).map((c) => c.aug);
+  assert.deepEqual(unconstrained, [...ordered].reverse());
+  // ...and it costs money. Pricing the illegal order would understate the round.
+  assert.ok(orderedCost(orderWithPrereqs(ENM)) > orderedCost([...ENM].sort((a, b) => b.base - a.base)));
+});
+
+test("orderWithPrereqs: independent augs still sort base-descending, chains interleave by base", () => {
+  const mixed = [
+    { aug: "Big", base: 10e9, value: 0.2, prereqs: [] },
+    ...ENM,
+    { aug: "Small", base: 1e6, value: 0.01, prereqs: [] },
+  ];
+  const o = orderWithPrereqs(mixed).map((c) => c.aug);
+  assert.equal(o[0], "Big");                       // highest base, unconstrained
+  assert.equal(o[o.length - 1], "Small");          // lowest base, unconstrained
+  assert.ok(o.indexOf("Embedded Netburner Module") < o.indexOf("ENM Core"));
+  assert.ok(o.indexOf("ENM Core V2") < o.indexOf("ENM Core V3"));
+});
+
+test("orderWithPrereqs: a prereq missing from the basket entirely is treated as already held", () => {
+  // augbuy passes installed augs as `held`; they are not basket members, so they must not block.
+  const only = [{ aug: "ENM Core", base: 2.5e9, value: 0.18, prereqs: ["Embedded Netburner Module"] }];
+  assert.deepEqual(orderWithPrereqs(only).map((c) => c.aug), ["ENM Core"]);
+});
+
+test("selectRound: buys a whole chain, and never a dependent without its prereq", () => {
+  // With the cutoff disabled the whole chain is bought, in dependency order.
+  const chosen = selectRound(ENM, 1e12, { held: new Set(), valueCutoff: Infinity });
+  assert.deepEqual(chosen.map((c) => c.aug),
+    ["Embedded Netburner Module", "ENM Core", "ENM Core V2", "ENM Core V3"]);
+
+  // With the DEFAULT cutoff the chain's tail is pruned, and that is correct rather than a chain bug:
+  // ENM Core V3 sits at slot 3 paying 1.9^3 = 6.86x, which is $128.6b per unit value against $9.7b
+  // for the round's best buy. Deferring it to slot 0 of the next round -- by which point its whole
+  // chain is INSTALLED -- costs its bare base instead. The cutoff prunes chains from the leaf end,
+  // which is the only end it can prune from without orphaning anything.
+  const trimmed = selectRound(ENM, 1e12, { held: new Set() }).map((c) => c.aug);
+  assert.deepEqual(trimmed, ["Embedded Netburner Module", "ENM Core", "ENM Core V2"]);
+  // whatever the budget, the basket is always prereq-closed
+  for (const b of [1e9, 3e9, 8e9, 2e10, 1e11]) {
+    const got = selectRound(ENM, b, { held: new Set() });
+    const names = new Set(got.map((c) => c.aug));
+    for (const c of got) for (const r of c.prereqs) {
+      assert.ok(names.has(r), "budget " + b + ": " + c.aug + " kept without " + r);
+    }
+  }
+});
+
+test("selectRound: drops a dependent whose prereq is not on offer", () => {
+  // ENM Core V3 is rep-affordable but ENM Core V2 is not, so the whole tail is unbuyable.
+  const offered = [ENM[0], ENM[1], ENM[3]];
+  const got = selectRound(offered, 1e12, { held: new Set() }).map((c) => c.aug);
+  assert.deepEqual(got, ["Embedded Netburner Module", "ENM Core"]);
+  // ...unless the missing link is already installed
+  const got2 = selectRound(offered, 1e12, { held: new Set(["ENM Core V2"]) }).map((c) => c.aug);
+  assert.ok(got2.includes("ENM Core V3"));
+});
+
+test("selectRound: prereq-free baskets behave exactly as before chains existed", () => {
+  const plain = [
+    { aug: "A", base: 1e9, value: 0.20 },
+    { aug: "B", base: 5e8, value: 0.05 },
+    { aug: "C", base: 2e9, value: 0.30 },
+  ];
+  const got = selectRound(plain, 1e11).map((c) => c.aug);
+  assert.deepEqual(got, ["C", "A", "B"]);   // purchase order: base descending
+});
+
+test("roundEconomics: a prereq's marginal cost is its whole subtree, not itself", () => {
+  const econ = roundEconomics(ENM);
+  assert.deepEqual(econ.map((r) => r.aug),
+    ["Embedded Netburner Module", "ENM Core", "ENM Core V2", "ENM Core V3"]);
+  const root = econ[0], leaf = econ[3];
+  // dropping the root drops all four; dropping the leaf drops one
+  assert.equal(root.chain, 4);
+  assert.equal(leaf.chain, 0);
+  assert.ok(root.marginal > root.paid * 5,
+            "the cheap root of an expensive chain must not look cheap to drop");
+  assert.ok(Math.abs(leaf.marginal - leaf.paid) / leaf.paid < 1e-9, "a leaf's marginal is its own price");
+  // and the ratio is judged on subtree value, so the root is not credited only its own 0.077
+  assert.ok(root.marginalPerValue < root.marginal / root.value);
+});
+
+test("NFG ladder: each level costs 1.14 x 1.9 the last, and self-limits", () => {
+  // base 750e3 x BN3 AugmentationMoneyCost 3, after 11 queued augs
+  const price0 = 750e3 * 3 * Math.pow(1.9, 11);
+  const step = 1.14 * 1.9;
+  assert.ok(Math.abs(price0 - 2.6213e9) / 2.6213e9 < 0.001, "level 0 ~ $2.62b, got " + price0);
+  let cash = 14.07e12, levels = 0, spent = 0;
+  for (let n = 0; n < 200; n++) {
+    const price = price0 * Math.pow(step, n);
+    if (price > cash) break;
+    cash -= price; spent += price; levels++;
+  }
+  assert.equal(levels, 11, "expected 11 levels from $14.07t, got " + levels);
+  assert.ok(spent > 11e12 && spent < 11.2e12, "expected ~$11.08t, got " + spent);
+  // 11 levels is +1% each, multiplicative
+  assert.ok(Math.abs(Math.pow(1.01, levels) - 1.1157) < 1e-4);
 });
