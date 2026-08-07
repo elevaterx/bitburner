@@ -54,7 +54,7 @@
  *  Deployed by update.js (repo tree is auto-discovered -- no manifest to edit). @param {NS} ns */
 import { augValue, selectRound, roundCost, orderedCost, orderWithPrereqs, roundEconomics,
          nodeWeights, gangRepPerSec, maxRepGap, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
-import { planRound, nfgLadder as ladderOf, roundScore, dropImproves } from "./lib/aug-round.js";
+import { planRound, nfgLadder as ladderOf, roundScore, dropImproves, unlockGains } from "./lib/aug-round.js";
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -169,7 +169,11 @@ export async function main(ns) {
     // The gap that matters is the LARGEST one still standing over augs that do something other than
     // raise rep -- i.e. how much rep until nothing you want is gated. Pure-rep augs are excluded
     // from that max by maxRepGap, or they would justify their own purchase.
-    const repGap = maxRepGap(buyable.map(c => ({ repReq: c.repReq, rep: c._rep, stats: c.stats })));
+    // Scoped to the gang's own faction: that is where the respect-driven rep actually lands.
+    const gangFaction = gRead && gRead.faction ? gRead.faction : null;
+    const repGap = maxRepGap(
+        buyable.map(c => ({ repReq: c.repReq, rep: c._rep, stats: c.stats, faction: c.faction })),
+        gangFaction ? new Set([gangFaction]) : null);
 
     const WEIGHTS = nodeWeights({
         hackingExp: hackExp,
@@ -257,7 +261,7 @@ export async function main(ns) {
     const settledNfg = DONATE ? Infinity
         : nfgLadder(list.length, budget - orderedCost(list) * queueMult).marginal;
 
-    const bought = [], blockedRep = [], blockedMoney = [];
+    const bought = [], blockedRep = [], blockedMoney = [], donateRefused = [];
     let money = ns.getPlayer().money, spent = 0, donated = 0;
     const repMult = (ns.getPlayer().mults && ns.getPlayer().mults.faction_rep) || 1;
     let fwrg = 1; try { fwrg = ns.getBitNodeMultipliers().FactionWorkRepGain || 1; } catch (e) {}
@@ -272,14 +276,31 @@ export async function main(ns) {
     for (const c of list) {
         let rep = S.getFactionRep(c.faction);
         // buy missing rep via donation, if allowed and favor permits
-        if (rep < c.repReq && DONATE) {
+        // YOU CANNOT DONATE TO YOUR OWN GANG'S FACTION. Not a favor threshold -- a categorical refusal:
+        //   if (Player.gang && faction.name === Player.getGangFaction().name) return false
+        // (Singularity.ts:903-906, "because you are managing a gang for it"). Favor is irrelevant, and
+        // a gang faction reaches enormous favor at the first install, so this looks available exactly
+        // when it is most tempting. Slum Snakes hit favor ~383 against a gate of 75 and still refuses.
+        //
+        // The old code called donateToFaction and IGNORED its return value, then debited money,
+        // donated and spent regardless -- so a refused donation corrupted the whole report's
+        // accounting, and in a DRY RUN it asserted rep = repReq and listed the aug as affordable.
+        // Both directions are now checked.
+        const isGangFaction = gangFaction && c.faction === gangFaction;
+        if (rep < c.repReq && DONATE && !isGangFaction) {
             let favor = 0; try { favor = S.getFactionFavor(c.faction); } catch (e) {}
+            // repFromDonation = amt / DonateMoneyToRepDivisor * mults.faction_rep * FactionWorkRepGain
+            // (Faction/formulas/donation.ts:8-10) -- no favor term, so this inverts exactly.
             const need = (c.repReq - rep) * 1e6 / repMult / fwrg * 1.02;   // +2% buffer
             const price0 = DO_BUY ? S.getAugmentationPrice(c.aug) : S.getAugmentationBasePrice(c.aug) * queueMult * Math.pow(1.9, bought.length);
             if (favor >= favorGate && money >= need + price0) {
-                if (DO_BUY) S.donateToFaction(c.faction, need);
-                money -= need; donated += need; spent += need;
-                rep = DO_BUY ? S.getFactionRep(c.faction) : c.repReq;
+                const ok = DO_BUY ? S.donateToFaction(c.faction, need) : true;
+                if (ok) {
+                    money -= need; donated += need; spent += need;
+                    rep = DO_BUY ? S.getFactionRep(c.faction) : c.repReq;
+                } else {
+                    donateRefused.push(c.faction);
+                }
             }
         }
         if (rep < c.repReq) { blockedRep.push({ ...c, rep }); continue; }
@@ -373,6 +394,14 @@ export async function main(ns) {
                 },
                 nfg: NFG ? { ...NFG, repReq: (() => { try { return S.getAugmentationRepReq(NFG_NAME); } catch (e) { return null; } })() } : null,
                 installed: [...installed],
+                // per-faction rep+favor: two dumps apart give a MEASURED rate per faction, which is
+                // the only honest basis for a rep ETA outside the gang.
+                factions: factions.map(f => {
+                    let r = 0, fav = 0;
+                    try { r = S.getFactionRep(f); } catch (e) {}
+                    try { fav = S.getFactionFavor(f); } catch (e) {}
+                    return { faction: f, rep: r, favor: fav, isGang: f === gangFaction };
+                }),
                 // buyable, not the selected list -- the replay must be free to choose differently
                 candidates: buyable.map(c => ({
                     aug: c.aug, faction: c.faction, rep: c._rep, base: c.base,
@@ -432,7 +461,16 @@ export async function main(ns) {
     for (const b of bought) ns.tprint("  + " + b.aug.padEnd(38) + " [" + b.faction + "]  $" + fmt(b.price)
         + "   value " + (b.value || 0).toFixed(3) + "  (base $" + fmt(b.base) + ")");
     if (blockedRep.length) {
-        ns.tprint("blocked on REP (" + blockedRep.length + ")" + (DONATE ? "" : " -- add 'donate' if favor>=150") + ":");
+        ns.tprint("blocked on REP (" + blockedRep.length + ")"
+            + (DONATE ? "" : " -- add 'donate' if favor >= " + favorGate) + ":");
+        if (DONATE && gangFaction) {
+            ns.tprint("  note: donations to " + gangFaction + " are refused outright because you run its gang"
+                + " (Singularity.ts:903) -- favor does not matter. Gang rep comes from respect instead.");
+        }
+        if (donateRefused.length) {
+            ns.tprint("  note: the game REFUSED donations to " + [...new Set(donateRefused)].join(", ")
+                + " -- these factions may not offer work. Nothing was spent on them.");
+        }
         for (const c of blockedRep) ns.tprint("  - " + c.aug + "  [" + c.faction + "]  need " + fmt(c.repReq) + " rep, have " + fmt(c.rep));
     }
     if (blockedMoney.length) {
@@ -450,13 +488,32 @@ export async function main(ns) {
         if (gated.length) {
             ns.tprint("REP-GATED (" + gated.length + ") -- not in the plan above; ETA at "
                 + fmt(repPerSec) + " rep/s" + (repPerSec > 0 ? "" : " (no income -- these need faction work or 'donate')") + ":");
+            // An aug's own value is NOT what unlocking it is worth: adding one shifts every cheaper
+            // aug down a slot, may push something else out, and changes what is left for NFG. So
+            // re-plan with it unlocked and print the ROUND delta -- the number that decides whether
+            // to wait. Capped, because each entry costs a full planRound.
+            const gains = NFG && !NO_NFG
+                ? unlockGains(affordableByRep, gated, budget, { ...selBase, nfg: NFG },
+                              roundScore(list, budget, NFG, queueMult).total, 6)
+                : [];
             let shown = 0;
             for (const c of gated) {
-                if (shown++ >= 12) { ns.tprint("  ... and " + (gated.length - 12) + " more"); break; }
+                if (shown >= 12) { ns.tprint("  ... and " + (gated.length - 12) + " more"); break; }
                 const gap = c.repReq - c._rep;
+                const g = gains[shown];
+                shown++;
+                // ONLY quote an ETA when the income actually reaches THIS faction. The gang's rep
+                // goes to the gang's faction and nowhere else; quoting it against another faction's
+                // gap invents a deadline that will never arrive.
+                const fed = gangFaction && c.faction === gangFaction && repPerSec > 0;
                 ns.tprint("  ~ " + c.aug.padEnd(38) + " [" + c.faction + "]  need " + fmt(gap) + " more rep"
-                    + (repPerSec > 0 ? "  ETA " + fmtDur(gap / repPerSec) : "")
-                    + "   value " + c.value.toFixed(3) + "  base $" + fmt(c.base));
+                    + (fed ? "  ETA " + fmtDur(gap / repPerSec)
+                           : "  -- NOT fed by the gang (" + (gangFaction || "no gang") + " gets the respect);"
+                             + " needs faction work at " + c.faction + " or 'donate'")
+                    + "   value " + c.value.toFixed(3) + "  base $" + fmt(c.base)
+                    + (g && g.aug === c.aug && g.gain > 1e-9
+                        ? "   WAITING IS WORTH +" + g.gain.toFixed(3) + " round (-> x" + g.hacking.toFixed(3) + " hacking)"
+                        : g && g.aug === c.aug ? "   (no round gain -- would not make the basket)" : ""));
             }
         }
     }

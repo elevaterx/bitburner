@@ -544,3 +544,21 @@ test("selectRound: adding candidates never collapses the basket (the frozen-anch
   }
   assert.ok(prev > 0.9, "the padded board should reach ~0.99 of value, got " + prev.toFixed(3));
 });
+
+test("maxRepGap: only counts gaps at factions the income actually feeds", () => {
+  // The live failure: a gang faction does NOT sell everything. BN3 GangUniqueAugs 0.5 means
+  // getFactionAugmentationsFiltered drops faction-unique augs on a seeded coin flip, so "The Black
+  // Hand" was buyable only from The Black Hand faction -- which the gang's respect does not feed.
+  const cands = [
+    { aug: "gangAug", faction: "Slum Snakes", repReq: 1e6, rep: 48.9e6, stats: { hacking: 1.1 } },
+    { aug: "The Black Hand", faction: "The Black Hand", repReq: 300e3, rep: 38961, stats: { hacking: 1.1 } },
+  ];
+  // unscoped: picks up a 261k gap at a faction with no income -- the old, wrong behaviour
+  assert.ok(Math.abs(maxRepGap(cands) - (300e3 - 38961)) < 1);
+  // scoped to the gang: nothing there is gated, so rep is genuinely not the constraint
+  assert.equal(maxRepGap(cands, new Set(["Slum Snakes"])), 0);
+  // and the consequence for weighting: a gap the income cannot close must not make rep look scarce
+  assert.equal(repWeight({ repPerSec: 4677, repShortfall: maxRepGap(cands, new Set(["Slum Snakes"])) }, 1), 0);
+  assert.ok(repWeight({ repPerSec: 4677, repShortfall: maxRepGap(cands) }, 1) > 0,
+            "unscoped would have kept a nonzero rep weight off an unreachable faction");
+});
