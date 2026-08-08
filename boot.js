@@ -222,15 +222,12 @@ function bfs(ns) {
 // True where scripted hacking can't meaningfully earn: farm income ~ ScriptHackMoneyGain x
 // ServerMaxMoney, which is ~0 in BN8 (gain 0) and BN9 (maxMoney 0.01) -- so both are caught
 // without hardcoding node numbers. getBitNodeMultipliers needs SF5; defaults to "alive" if absent.
+// Delegates to lib/node-policy.js -- the BN8 fast path is gone because the index catches it anyway
+// (ScriptHackMoneyGain 0 -> index 0), and a hardcoded node number is exactly the kind of thing that
+// goes stale. getBitNodeMultipliers needs SF5; without it the index defaults to 1 = "assume alive".
 function hackIncomeDead(ns) {
     try {
-        if (ns.getResetInfo().currentNode === 8) return true;   // stocks-only (fast path)
-        const m = ns.getBitNodeMultipliers();
-        if (m) {
-            const gain = typeof m.ScriptHackMoneyGain === "number" ? m.ScriptHackMoneyGain : 1;
-            const maxMoney = typeof m.ServerMaxMoney === "number" ? m.ServerMaxMoney : 1;
-            if (gain * maxMoney < 0.05) return true;
-        }
+        return !hackMoneyLive(ns.getBitNodeMultipliers());
     } catch (e) {}
     return false;
 }

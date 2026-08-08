@@ -30,6 +30,7 @@
  *  @param {NS} ns */
 import { applyLayout } from "winlayout.js";
 import { accessKarmaRequirement, bootstrapWeights, scoreCrime } from "./lib/gang-bootstrap.js";
+import { nodePolicy } from "./lib/node-policy.js";
 export async function main(ns) {
     // === CONFIG ===
     const ENABLE_INVITES   = true;
@@ -320,11 +321,15 @@ export async function main(ns) {
         // the farm earns normally -- BN12 run #1 has every multiplier at exactly 1.0 -- the grind
         // buys nothing and, worse, the gym phase ahead of it suppresses faction work for the whole
         // node. Same dead-hack heuristic purchaser.js uses, so the two agree.
-        let gangWorthIt = true;
+        let gangWorthIt = true, gangReason = "";
         try {
-            const gain = (mults && typeof mults.ScriptHackMoneyGain === "number") ? mults.ScriptHackMoneyGain : 1;
-            const maxMoney = (mults && typeof mults.ServerMaxMoney === "number") ? mults.ServerMaxMoney : 1;
-            gangWorthIt = (gain * maxMoney) < 0.05;
+            const pol = nodePolicy({
+                mults, bitNode: node,
+                sourceFiles: (ns.getResetInfo().ownedSF) || null,
+                hasGang: false,        // asking whether to ESTABLISH one; gang.js owns an existing gang
+            });
+            gangWorthIt = pol.gang.on;
+            gangReason = pol.gang.reason;
         } catch (e) {}
 
         let karmaGrind = false, karmaShortfall = 0, karmaNow = 0;
@@ -382,7 +387,7 @@ export async function main(ns) {
         // Karma takes precedence over the cash floor: the grind is ~28 h of wall clock even
         // optimally, so it must run continuously rather than only in the cold-start window when
         // cash happens to be low. Gym outranks crime while the gym target is unmet.
-        if (!gangWorthIt && ENABLE_KARMA) log("  gang: SKIPPED -- hacking money is live here, the farm is the engine");
+        if (!gangWorthIt && ENABLE_KARMA) log("  gang: SKIPPED -- " + gangReason);
         const doCrime = !gymming && profile.crime && (karmaGrind || (ENABLE_CRIME && cash < CASH_FLOOR));
         const crimeWeights = karmaGrind
             ? bootstrapWeights(null, karmaShortfall)          // { money:0, karma:1, combat:0, kills:0 }
