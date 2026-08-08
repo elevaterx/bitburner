@@ -94,14 +94,10 @@ function freeName(ns, names) {
 // ServerMaxMoney, which is ~0 in BN8 (gain 0) and BN9 (maxMoney 0.01) -- so both are caught
 // without hardcoding node numbers. Also covers BN9's CloudServerLimit 0 case by skipping cleanly.
 function hackIncomeDead(ns) {
+    // Delegates to lib/node-policy.js. The BN8 fast path is gone -- the index catches it (gain 0 ->
+    // index 0) without a hardcoded node number.
     try {
-        if (ns.getResetInfo().currentNode === 8) return true;   // stocks-only (fast path)
-        const m = ns.getBitNodeMultipliers();
-        if (m) {
-            const gain = typeof m.ScriptHackMoneyGain === "number" ? m.ScriptHackMoneyGain : 1;
-            const maxMoney = typeof m.ServerMaxMoney === "number" ? m.ServerMaxMoney : 1;
-            if (gain * maxMoney < 0.05) return true;
-        }
+        return !hackMoneyLive(ns.getBitNodeMultipliers());
     } catch (e) {}
     return false;
 }

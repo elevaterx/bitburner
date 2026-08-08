@@ -55,6 +55,7 @@
 import { augValue, selectRound, roundCost, orderedCost, orderWithPrereqs, roundEconomics,
          nodeWeights, gangRepPerSec, maxRepGap, DEFAULT_VALUE_CUTOFF } from "./lib/aug-plan.js";
 import { planRound, nfgLadder as ladderOf, roundScore, dropImproves, unlockGains } from "./lib/aug-round.js";
+import { hackMoneyIndex } from "./lib/node-policy.js";
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -421,7 +422,7 @@ export async function main(ns) {
                 + " Every price below is base x" + queueMult.toFixed(1) + ". INSTALL to reset it to x1.");
         }
         ns.tprint("weights: money-farm x" + (WEIGHTS.hacking_money / 0.5).toFixed(2)
-            + " (node " + (bnm ? ((bnm.ScriptHackMoneyGain ?? 1) * (bnm.ServerMaxMoney ?? 1)).toFixed(2) : "?")
+            + " (node " + hackMoneyIndex(bnm).toFixed(2)
             + ", coordinator " + (farmRunning ? "running" : "STOPPED") + ")"
             + "   exp-channel x" + (WEIGHTS.hacking_exp).toFixed(3)
             + "   faction_rep x" + (WEIGHTS.faction_rep).toFixed(3));
