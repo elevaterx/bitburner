@@ -10,6 +10,7 @@
  *  usage:  run corp.js [--once] [--no-selffund] [--no-products] [--office 3] [--quiet]
  *  @param {NS} ns */
 import { getCapabilities } from "./lib/caps.js";
+import { nodePolicy } from "./lib/node-policy.js";
 import { writeStatus } from "./lib/modules.js";
 import { money as fmtMoney } from "./lib/fmt.js";
 import {
@@ -31,6 +32,7 @@ export async function main(ns) {
     ["no-products", false],
     ["office", DEFAULT_CORP_CFG.officeStartSize],
     ["quiet", false],
+    ["force", false],
   ]);
   const cfg = {
     ...DEFAULT_CORP_CFG,
@@ -50,6 +52,24 @@ export async function main(ns) {
   let blocked = false, passError = null;
   while (true) {
     if (!ns.corporation.hasCorporation()) {
+      // POLICY GATE, ahead of the create call. createCorporation(name, selfFund=true) spends
+      // $150,000,000,000 of YOUR CASH -- costOfCreatingCorporation(false) = 150e9
+      // (Corporation/helpers.ts:80-85) -- and seed funding is refused outside BN3
+      // (UseSeedMoneyOutsideBN3, Corporation/Actions.ts:42-45), so self-fund is the only path here.
+      // This loop retries every 10s, so without this gate the corp is not "blocked", it is ARMED:
+      // it fires silently the instant cash crosses $150b, in nodes where node-policy says the farm
+      // out-earns it. Observed live in BN12 (index 0.961) with status reading "no corp (need BN3 /
+      // $150b)" -- which reads as blocked and is not.
+      if (!flags.force) {
+        const pol = establishPolicy(ns, "corp");
+        if (!pol.on) {
+          if (!blocked) { log("NOT creating a corporation: " + pol.reason + ". (--force overrides.) Idling."); blocked = true; }
+          writeStatus(ns, "corp", { line: "off by policy -- " + pol.reason });
+          if (flags.once) return;
+          await ns.sleep(60_000);
+          continue;
+        }
+      }
       if (!ns.corporation.createCorporation(cfg.corpName, !flags["no-selffund"])) {
         if (!blocked) { log("Can't create a corporation (need BN3, or $150b to self-fund outside it). Idling."); blocked = true; }
         writeStatus(ns, "corp", { line: "no corp (need BN3 / $150b)" });
@@ -77,6 +97,30 @@ export async function main(ns) {
 
     if (flags.once) return;
     try { await ns.corporation.nextUpdate(); } catch (e) { await ns.sleep(2000); }
+  }
+}
+
+/** Should this node ESTABLISH the engine at all?  lib/node-policy.js owns the definition; this is the
+ *  third call site (sing.js gates its karma grind on the same call, boot.js gates the farm).
+ *
+ *  The distinction that matters: capability != policy. getCapabilities() answers "do I hold SF2/SF3",
+ *  which is why boot.js launches these managers unconditionally. It does NOT answer "is this engine
+ *  worth paying for here", and paying is exactly what the create path does.
+ *
+ *  An engine that ALREADY exists is never torn down -- both survive installs and cost nothing to keep
+ *  running -- so this is only ever consulted on the create path. `--force` overrides it. */
+function establishPolicy(ns, kind) {
+  try {
+    let mults = null; try { mults = ns.getBitNodeMultipliers(); } catch (e) {}   // needs SF5
+    let node = 0, sf = null;
+    try { const r = ns.getResetInfo(); node = r.currentNode; sf = r.ownedSF || null; } catch (e) {}
+    let homeRamGB = Infinity;
+    try { homeRamGB = ns.getServerMaxRam("home") - ns.getServerUsedRam("home"); } catch (e) {}
+    return nodePolicy({ mults, bitNode: node, sourceFiles: sf, homeRamGB })[kind];
+  } catch (e) {
+    // Never let a policy failure BLOCK an engine -- unknown state means "assume allowed", the same
+    // way hackMoneyIndex degrades. A missing SF5 must not silently disable a subsystem.
+    return { on: true, reason: "policy unavailable -- assuming allowed" };
   }
 }
 

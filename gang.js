@@ -18,6 +18,7 @@
  *                      [--ascend-max 2] [--ascend-floor 0.95] [--no-warfare]
  *  @param {NS} ns */
 import { getCapabilities } from "./lib/caps.js";
+import { nodePolicy } from "./lib/node-policy.js";
 import { accessKarmaRequirement, rankGangRoutes } from "./lib/gang-bootstrap.js";
 import { money as fmtMoney, num as fmtNum } from "./lib/fmt.js";
 import { writeStatus } from "./lib/modules.js";
@@ -39,6 +40,7 @@ export async function main(ns) {
     ["no-warfare", false],
     ["objective", DEFAULT_GANG_CFG.objective],
     ["quiet", false],
+    ["force", false],
   ]);
   const cfg = {
     ...DEFAULT_GANG_CFG,
@@ -60,6 +62,21 @@ export async function main(ns) {
   let blockedNotified = false;
   while (true) {
     if (!ns.gang.inGang()) {
+      // POLICY GATE, ahead of the form call. Forming is not free and not reversible: it costs ~28h of
+      // karma grind, and createGang() permanently converts that faction into YOUR gang's faction --
+      // after which donateToFaction refuses it outright (Singularity.ts:903-906) and its storefront
+      // drops to the seeded GangUniqueAugs subset (FactionHelpers.tsx:172-199). In a node where the
+      // farm earns, that trades a rep channel away for an income engine you do not need.
+      if (!flags.force) {
+        const pol = establishPolicy(ns, "gang");
+        if (!pol.on) {
+          if (!blockedNotified) { log("NOT forming a gang: " + pol.reason + ". (--force overrides.) Idling."); blockedNotified = true; }
+          writeStatus(ns, "gang", { line: "off by policy -- " + pol.reason });
+          if (flags.once) return;
+          await ns.sleep(60_000);
+          continue;
+        }
+      }
       const formed = await tryFormGang(ns, caps, log, () => { blockedNotified = true; }, blockedNotified);
       if (!formed) {
         writeStatus(ns, "gang", { line: "forming - karma/faction" });
@@ -296,4 +313,28 @@ function nextMemberName(existing) {
   let i = existing.length;
   while (used.has("gm-" + i)) i++;
   return "gm-" + i;
+}
+
+/** Should this node ESTABLISH the engine at all?  lib/node-policy.js owns the definition; this is the
+ *  third call site (sing.js gates its karma grind on the same call, boot.js gates the farm).
+ *
+ *  The distinction that matters: capability != policy. getCapabilities() answers "do I hold SF2/SF3",
+ *  which is why boot.js launches these managers unconditionally. It does NOT answer "is this engine
+ *  worth paying for here", and paying is exactly what the create path does.
+ *
+ *  An engine that ALREADY exists is never torn down -- both survive installs and cost nothing to keep
+ *  running -- so this is only ever consulted on the create path. `--force` overrides it. */
+function establishPolicy(ns, kind) {
+  try {
+    let mults = null; try { mults = ns.getBitNodeMultipliers(); } catch (e) {}   // needs SF5
+    let node = 0, sf = null;
+    try { const r = ns.getResetInfo(); node = r.currentNode; sf = r.ownedSF || null; } catch (e) {}
+    let homeRamGB = Infinity;
+    try { homeRamGB = ns.getServerMaxRam("home") - ns.getServerUsedRam("home"); } catch (e) {}
+    return nodePolicy({ mults, bitNode: node, sourceFiles: sf, homeRamGB })[kind];
+  } catch (e) {
+    // Never let a policy failure BLOCK an engine -- unknown state means "assume allowed", the same
+    // way hackMoneyIndex degrades. A missing SF5 must not silently disable a subsystem.
+    return { on: true, reason: "policy unavailable -- assuming allowed" };
+  }
 }
