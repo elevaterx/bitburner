@@ -12,6 +12,7 @@
  *  drain. Pass 'force' to override.
  *
  *  @param {NS} ns */
+import { hackMoneyLive } from "./lib/node-policy.js";
 export async function main(ns) {
     ns.disableLog("ALL");
     const spendFrac = Number(ns.args[0]) || 0.5;       // max fraction of (cash - reserve) spent per loop

@@ -23,6 +23,8 @@
  *  (e.g. as an XP tap toward the daemon gate).
  *
  *  @param {NS} ns */
+import { hackMoneyLive } from "./lib/node-policy.js";
+import { coordPreset } from "./lib/node-open.js";
 export async function main(ns) {
     ns.disableLog("ALL");
 
@@ -57,7 +59,17 @@ export async function main(ns) {
     // the entire 32GB home you get after a BitNode reset, which would reserve more than exists.
     const SHARE_HOME_RES = Math.min(4096, Math.floor(ns.getServerMaxRam("home") / 2));
     const PURCHASER_FRAC = ns.args[1] !== undefined ? Number(ns.args[1]) : 0;        // 0 = purchaser off
-    const COORD_PRESET   = ns.args[2] !== undefined ? String(ns.args[2]) : "income"; // coord scenario preset
+    // coord scenario preset. Explicit arg wins; otherwise READ IT OFF STATE rather than defaulting
+    // blind to "income". After an install, exp is 0 and every purchased server is gone while home RAM
+    // survives, so the pool has slack that only xpw can use -- and `rebuild` is `income` with xpw on.
+    // See coordPreset() in lib/node-open.js for the window and its (sticky) limitation.
+    let coordAuto = false;
+    let COORD_PRESET = "income";
+    if (ns.args[2] !== undefined) {
+        COORD_PRESET = String(ns.args[2]);
+    } else {
+        try { COORD_PRESET = coordPreset(ns.getResetInfo()); coordAuto = true; } catch (e) {}
+    }
     const PURCHASER_RES  = 500_000;   // purchaser cash floor (only used if purchaser enabled)
     const SETTLE_MS      = 600;       // pause between ordered launches so each claims RAM before the next
     const FORCE_FARM     = ns.args[3] === "farm";   // override: run the farm even in a stocks-only node
@@ -126,7 +138,11 @@ export async function main(ns) {
     //         eat the pool. Income in those nodes is the stock market (run the trader). ----
     if (farmMode) {
         pid = ns.run("coordinator.js", 1, COORD_PRESET);
-        log(pid ? ("coordinator.js up (preset '" + COORD_PRESET + "') -- takes remaining pool") : "coordinator.js FAILED");
+        log(pid ? ("coordinator.js up (preset '" + COORD_PRESET + "'"
+            + (coordAuto ? (COORD_PRESET === "rebuild"
+                ? ", auto: installed recently -- xpw ON to soak the idle pool into levels"
+                : ", auto") : ", explicit")
+            + ") -- takes remaining pool") : "coordinator.js FAILED");
         await ns.sleep(SETTLE_MS);
     } else {
         log("coordinator SKIPPED (hacking-for-money is dead here). arg[3]='farm' forces it (e.g. as an XP tap).");

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isColdNode, rankCrimes, bestCrime, crimeTarget, etaSeconds, openerStep, TRAVEL_COST }
+import { isColdNode, rankCrimes, bestCrime, crimeTarget, etaSeconds, openerStep, TRAVEL_COST, justInstalled, coordPreset, REBUILD_WINDOW_MS }
   from "../lib/node-open.js";
 
 test("isColdNode: equal timestamps mean no install since node entry", () => {
@@ -62,4 +62,38 @@ test("openerStep: already in Aevum but broke still goes to casino, not back to c
   // after a save-scum RELOAD the script restarts mid-node; it must not re-run the crime phase just
   // because cash dipped below the fare it already spent
   assert.equal(openerStep({ cold: true, money: 1e3, city: "Aevum", casinoTarget: 10e9 }), "casino");
+});
+
+// --- boot's coordinator preset -------------------------------------------------------------------
+// `income` and `rebuild` differ in ONE positional arg (xpw). Reading that bit off getResetInfo beats
+// making the operator remember `run boot.js 0 0.5 rebuild` after every install.
+
+test("justInstalled reads lastAugReset as an epoch TIMESTAMP, not an elapsed time", () => {
+  const now = 1_700_000_000_000;
+  // PlayerObject.ts:168 -- lastAugReset = lastNodeReset = Date.now()
+  assert.equal(justInstalled({ lastAugReset: now - 5_000 }, now), true);
+  assert.equal(justInstalled({ lastAugReset: now - (REBUILD_WINDOW_MS - 1) }, now), true);
+  assert.equal(justInstalled({ lastAugReset: now - (REBUILD_WINDOW_MS + 1) }, now), false);
+  // PlayerObject.ts:61 -- the field is -1 before init. Must not read as "installed 54 years ago".
+  assert.equal(justInstalled({ lastAugReset: -1 }, now), false);
+  assert.equal(justInstalled({ lastAugReset: 0 }, now), false);
+  assert.equal(justInstalled(null, now), false);
+  assert.equal(justInstalled({}, now), false);
+  // a clock skewing backwards must not read as installed
+  assert.equal(justInstalled({ lastAugReset: now + 60_000 }, now), false);
+});
+
+test("a cold BitNode entry counts as a rebuild -- it is the most extreme case there is", () => {
+  const now = 1_700_000_000_000;
+  // entering a node sets BOTH stamps (prestigeSourceFile calls prestigeAugmentation first)
+  assert.equal(coordPreset({ lastAugReset: now, lastNodeReset: now }, now), "rebuild");
+  assert.equal(isColdNode({ lastAugReset: now, lastNodeReset: now }), true);
+});
+
+test("coordPreset: rebuild inside the window, income outside, income when unknown", () => {
+  const now = 1_700_000_000_000;
+  assert.equal(coordPreset({ lastAugReset: now - 60_000, lastNodeReset: 0 }, now), "rebuild");
+  assert.equal(coordPreset({ lastAugReset: now - 3 * 3600_000, lastNodeReset: 0 }, now), "income");
+  // unknown state must fall back to the everyday workhorse, never to a mode that suppresses income
+  assert.equal(coordPreset(null, now), "income");
 });
