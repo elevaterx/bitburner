@@ -26,6 +26,16 @@
 export async function main(ns) {
     ns.disableLog("ALL");
 
+    // COLD-NODE OPENER, first thing. A fresh BitNode hands you $1,262 while travel to Aevum costs
+    // $200,000 (CONSTANTS.TravelCost), so the casino -- worth ~$10b and the whole early game -- is
+    // unreachable until something earns the fare. open.js does crime -> Aevum -> casino.js.
+    //
+    // Fire-and-forget by design: open.js self-checks getResetInfo() (lastAugReset <= lastNodeReset)
+    // and exits immediately if this is not a cold node, so the policy lives in ONE place and boot
+    // does not duplicate it. Deliberately not awaited -- the rest of the stack should come up while
+    // the crime phase runs.
+    try { ns.exec("open.js", "home"); } catch (e) {}
+
     // ---- config ----
     // Args (positional):
     //   [0] shareCap       sharecap thread cap. DEFAULT 0 = NO share (income mode -- the normal state).

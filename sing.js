@@ -315,8 +315,20 @@ export async function main(ns) {
         // decreasing -- nothing in the game raises it -- so once the gate is cleared the
         // shortfall stays 0 forever, and in BN2 accessKarmaRequirement returns 0 so a player
         // with any negative karma is excluded automatically.
+        // A GANG IS ONLY WORTH ~28h OF KARMA GRIND WHERE HACKING MONEY IS DEAD. The gang exists as
+        // an income engine for nodes that kill scripted hacking (BN2 0.08, BN3 0.04, BN8 0). Where
+        // the farm earns normally -- BN12 run #1 has every multiplier at exactly 1.0 -- the grind
+        // buys nothing and, worse, the gym phase ahead of it suppresses faction work for the whole
+        // node. Same dead-hack heuristic purchaser.js uses, so the two agree.
+        let gangWorthIt = true;
+        try {
+            const gain = (mults && typeof mults.ScriptHackMoneyGain === "number") ? mults.ScriptHackMoneyGain : 1;
+            const maxMoney = (mults && typeof mults.ServerMaxMoney === "number") ? mults.ServerMaxMoney : 1;
+            gangWorthIt = (gain * maxMoney) < 0.05;
+        } catch (e) {}
+
         let karmaGrind = false, karmaShortfall = 0, karmaNow = 0;
-        if (ENABLE_KARMA && profile.crime) {
+        if (ENABLE_KARMA && profile.crime && gangWorthIt) {
             try {
                 const reset = ns.getResetInfo();                       // 1GB, no SF4 needed
                 const haveSF2 = reset.ownedSF && (Number(reset.ownedSF.get(2)) || 0) > 0;
@@ -349,8 +361,17 @@ export async function main(ns) {
                     } catch (e) {}
                     if (!atGym) {
                         const ok = ns.singularity.gymWorkout(GYM_LOCATION, quad[0].a, FOCUS);
+                        // A REFUSED WORKOUT MUST NOT CLAIM THE LOOP. gymming=true suppresses BOTH the
+                        // crime phase (doCrime = !gymming && ...) and, via the deliberate no-op
+                        // branch, the faction-work phase. So if the workout never started, holding
+                        // gymming=true stalls EVERYTHING -- silently, forever, with only a log line.
+                        // Observed live: open.js leaves you in Aevum for the casino, GYM_LOCATION is
+                        // Powerhouse Gym (LocationName.Sector12PowerhouseGym -- Sector-12), every
+                        // call was refused, and sing did nothing at all for 4.2 hours.
+                        if (!ok) gymming = false;
                         log("  gym: " + quad[0].k + " " + quad[0].v + "/" + GYM_TARGET
-                            + (ok ? "" : "  [gymWorkout REFUSED -- wrong city? travel to Sector-12]"));
+                            + (ok ? "" : "  [gymWorkout REFUSED -- wrong city (" + GYM_LOCATION
+                                + " is in Sector-12); SKIPPING gym so work/crime can run]"));
                     } else {
                         log("  gym: " + quad[0].k + " " + quad[0].v + "/" + GYM_TARGET + " (training)");
                     }
@@ -361,6 +382,7 @@ export async function main(ns) {
         // Karma takes precedence over the cash floor: the grind is ~28 h of wall clock even
         // optimally, so it must run continuously rather than only in the cold-start window when
         // cash happens to be low. Gym outranks crime while the gym target is unmet.
+        if (!gangWorthIt && ENABLE_KARMA) log("  gang: SKIPPED -- hacking money is live here, the farm is the engine");
         const doCrime = !gymming && profile.crime && (karmaGrind || (ENABLE_CRIME && cash < CASH_FLOOR));
         const crimeWeights = karmaGrind
             ? bootstrapWeights(null, karmaShortfall)          // { money:0, karma:1, combat:0, kills:0 }
